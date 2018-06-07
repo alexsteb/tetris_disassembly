@@ -1,3 +1,9 @@
+; Screen constants
+rSCREEN_HEIGHT EQU 144 ; Visible Pixels before VBlank
+rSCREEN_WIDTH  EQU 160 ; Visible Pixels before HBlank
+
+
+
 ; Hardware registers
 rJOYP       EQU $ff00 ; Joypad (R/W)
 rSB         EQU $ff01 ; Serial transfer data (R/W)
@@ -37,9 +43,8 @@ rNR50       EQU $ff24 ; Channel control / ON-OFF / Volume (R/W)
 rNR51       EQU $ff25 ; Selection of Sound output terminal (R/W)
 rNR52       EQU $ff26 ; Sound on/off
 rLCDC       EQU $ff40 ; LCD Control (R/W)
-rLCDC_ENABLE EQU 7
-rLCDC_ENABLE_MASK EQU 1 << rLCDC_ENABLE
-rSTAT       EQU $ff41 ; LCDC Status (R/W)
+
+rLCDC_STAT  EQU $ff41 ; LCDC Status (R/W)
 rSCY        EQU $ff42 ; Scroll Y (R/W)
 rSCX        EQU $ff43 ; Scroll X (R/W)
 rLY         EQU $ff44 ; LCDC Y-Coordinate (R)
@@ -62,12 +67,7 @@ rBGPI       EQU $ff68 ; CGB Mode Only - Background Palette Index
 rBGPD       EQU $ff69 ; CGB Mode Only - Background Palette Data
 rOBPI       EQU $ff6a ; CGB Mode Only - Sprite Palette Index
 rOBPD       EQU $ff6b ; CGB Mode Only - Sprite Palette Data
-rUNKNOWN1   EQU $ff6c ; (FEh) Bit 0 (Read/Write) - CGB Mode Only
 rSVBK       EQU $ff70 ; CGB Mode Only - WRAM Bank
-rUNKNOWN2   EQU $ff72 ; (00h) - Bit 0-7 (Read/Write)
-rUNKNOWN3   EQU $ff73 ; (00h) - Bit 0-7 (Read/Write)
-rUNKNOWN4   EQU $ff74 ; (00h) - Bit 0-7 (Read/Write) - CGB Mode Only
-rUNKNOWN5   EQU $ff75 ; (8Fh) - Bit 4-6 (Read/Write)
-rUNKNOWN6   EQU $ff76 ; (00h) - Always 00h (Read Only)
-rUNKNOWN7   EQU $ff77 ; (00h) - Always 00h (Read Only)
+
+rUNKNOWN1   EQU $ffa4 ; ?
 rIE         EQU $ffff ; Interrupt Enable (R/W)
