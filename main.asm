@@ -1,3 +1,6 @@
+INCLUDE "constants.asm"
+INCLUDE "palettes.asm"
+
 ; rst vectors
 SECTION "rst 00", ROM0 [$00]
   jp .Init
@@ -261,105 +264,130 @@ SECTION "Main", ROM0
 ; Flush WRAM Bank 1
 	xor a
 	ld hl, $dfff	; End of WRAM Bank 1
-	ld c, $10	; $1000 = size of WRAM
+	ld c, $10	; $1000 = size of WRAM Bank 1
 	ld b, $00	; "
-.loop0:
+.loop_0:
 	ldd [hl], a
 	dec b
-	jr nz, .loop0
+	jr nz, .loop_0
 	dec c
-	jr nz, .loop0
-.l_021b:
-	ld a, $01
+	jr nz, .loop_0
+	
+.Screen_Setup:
+
+rINTERRUPT_DEFAULT EQU %00000001
+; * VBlank interrupt enabled
+; * everything else disabled
+
+rLCDC_START EQU %10000000
+; * LCD enabled
+; * everything else disabled
+
+	ld a, rINTERRUPT_DEFAULT
+	
 	di
-	ldh [$ff00 + $0f], a
-	ldh [$ff00 + $ff], a
+	
+	ldh [rIF], a
+	ldh [rIE], a
+	
 	xor a
-	ldh [$ff00 + $42], a
-	ldh [$ff00 + $43], a
-	ldh [$ff00 + $a4], a
-	ldh [$ff00 + $41], a
-	ldh [$ff00 + $01], a
-	ldh [$ff00 + $02], a
-	ld a, $80
-	ldh [$ff00 + $40], a
+	
+	ldh [rSCY], a
+	ldh [rSCX], a
+	ldh [rUNKNOWN], a
+	ldh [rLCDC_STAT], a
+	ldh [rSB], a
+	ldh [rSC], a
+	ld a, rLCDC_START
+	ldh [rLCDC], a
 
-.l_0233:
-	ldh a, [$ff00 + $44]
-	cp $94
-	jr nz, .l_0233
+.loop_1:
+	ldh a, [rLY]
+	cp rSCREEN_HEIGHT + 4
+	jr nz, .loop_1
+	
 	ld a, $03
-	ldh [$ff00 + $40], a
-	ld a, $e4
-	ldh [$ff00 + $47], a
-	ldh [$ff00 + $48], a
-	ld a, $c4
-	ldh [$ff00 + $49], a
-	ld hl, $ff26
-	ld a, $80
-	ldd [hl], a
-	ld a, $ff
-	ldd [hl], a
-	ld [hl], $77
+	ldh [rLCDC], a
+	
+	ld a, rPALETTE_1
+	ldh [rBGP], a
+	ldh [rOBP0], a
+	
+	ld a, rPALETTE_2
+	ldh [rOBP1], a
+	ld hl, rNR52
+	
+	ld a, rSOUND_ON
+	ldd [hl], a	; rNR51
+	
+	ld a, rUSE_ALL_CHANNELS
+	ldd [hl], a	; rNR50
+	ld [hl], rMASTER_VOLUME_MAX
+	
 	ld a, $01
-	ld [$2000], a
-	ld sp, $cfff
+	ld [rMBC], a
+	ld sp, rSP_INIT
+
+; Flush WRAM Bank 1 (last page only)
 	xor a
-	ld hl, $dfff
+	ld hl, $dfff	; End of WRAM Bank 1
 	ld b, $00
-
-.l_0260:
+.loop_2:
+	ldd [hl], a
+	dec b		
+	jr nz, .loop_2	; Flush 256 bytes from end of WRAM Bank 1
+	
+; Flush WRAM Bank 0
+	ld hl, $cfff	; End of WRAM Bank 0
+	ld c, $10	; $1000 = size of WRAM Bank 0
+	ld b, $00	; "
+.loop_3:
 	ldd [hl], a
 	dec b
-	jr nz, .l_0260
-	ld hl, $cfff
-	ld c, $10
-	ld b, $00
-
-.l_026b:
-	ldd [hl], a
-	dec b
-	jr nz, .l_026b
+	jr nz, .loop_3
 	dec c
-	jr nz, .l_026b
+	jr nz, .loop_3
 
 
-func_0272::
-	ld hl, $9fff
-	ld c, $20
+Flush_VRAM::
+	ld hl, $9fff	; End of Video RAM
+	ld c, $20	; $2000 = Size of Video RAM
 	xor a
 	ld b, $00
-
-.l_027a:
+.loop_4:
 	ldd [hl], a
 	dec b
-	jr nz, .l_027a
+	jr nz, .loop_4
 	dec c
-	jr nz, .l_027a
-	ld hl, $feff
+	jr nz, .loop_4
+	
+; Flush Object Attribute Memory (OAM)	
+	ld hl, $feff	; End of unusable hardware RAM
 	ld b, $00
-
-.l_0286:
+.loop_5:
 	ldd [hl], a
 	dec b
-	jr nz, .l_0286
-	ld hl, $fffe
+	jr nz, .loop_5	; Flush 256 bytes from end of hardware RAM, including OAM
+
+; Flush High RAM
+	ld hl, $fffe	; End of High RAM
 	ld b, $80
-
-.l_028f:
+.loop_6:
 	ldd [hl], a
 	dec b
-	jr nz, .l_028f
+	jr nz, .loop_6	; Flush 128 bytes (Entire HRAM)
+	
+; Copy DMA Transfer routine into HRAM ($2a7f -> $ffb6)
 	ld c, $b6
 	ld b, $0c
 	ld hl, $2a7f
-
-.l_029a:
+.loop_7:
 	ldi a, [hl]
 	ldh [c], a
 	inc c
 	dec b
-	jr nz, .l_029a
+	jr nz, .loop_7
+	
 	call func_2795
 	call func_7ff3
 	ld a, $09
@@ -386,7 +414,7 @@ func_0272::
 	ldh a, [$ff00 + $80]
 	and $0f
 	cp $0f
-	jp z, .l_021b
+	jp z, .Screen_Setup
 	ld hl, $ffa6
 	ld b, $02
 
@@ -4783,7 +4811,7 @@ func_1c0d::
 	ldh a, [$ff00 + $80]
 	and $0f
 	cp $0f
-	jp z, .l_021b
+	jp z, .Screen_Setup
 	ldh a, [$ff00 + $e4]
 	and a
 	ret nz
