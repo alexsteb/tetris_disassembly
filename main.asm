@@ -22,7 +22,8 @@ SECTION "rst 28", ROM0 [$28]
 	add hl, de
 	ld e, [hl]
 	inc hl
-  
+
+; Continue  
 SECTION "rst 30", ROM0 [$30]
 	ld d, [hl]
 	push de
@@ -56,6 +57,21 @@ Serial::
 	pop af
 	reti
 
+func_006b::
+	ldh a, [$ff00 + $cd]
+	rst 28
+	
+	db 78, 00, 9f, 00, a4, 00, ba, 00, ea, 27
+	
+.l_0078:
+	ldh a, [$ff00 + $e1]
+	cp $07
+	jr z, .l_0086
+	cp $06
+	ret z
+	ld a, $06
+	ldh [$ff00 + $e1], a
+	ret
 
 .l_0086:
 	ldh a, [$ff00 + $01]
