@@ -18,20 +18,23 @@ SECTION "rst 20", ROM0 [$20]
 	rst $38
   
 SECTION "rst 28", ROM0 [$28]
-	add a, a
-	pop hl
+
+; Helper function:
+; * doubles the current game status (register A)
+; * finds an address in a list located after caller's address (depending on game status)
+; * jumps to that address
+
+	add a, a	; double GAME_STATUS
+	pop hl		
 	ld e, a
 	ld d, $00
-	add hl, de
-	ld e, [hl]
+	add hl, de	; add 2 * GAME_STATUS to caller address
+	ld e, [hl]	; get 2-byte-address from that location
 	inc hl
-
-; Continue  
-SECTION "rst 30", ROM0 [$30]
 	ld d, [hl]
 	push de
 	pop hl
-	jp [hl]
+	jp [hl]		; jump to that address
   
 SECTION "rst 38", ROM0 [$38]
 	rst $38
@@ -294,39 +297,39 @@ rLCDC_START EQU %10000000
 	
 	ldh [rSCY], a
 	ldh [rSCX], a
-	ldh [rUNKNOWN], a
+	ldh [rUNKNOWN1], a
 	ldh [rLCDC_STAT], a
 	ldh [rSB], a
 	ldh [rSC], a
-	ld a, rLCDC_START
+	ld a, LCDC_START
 	ldh [rLCDC], a
 
 .loop_1:
 	ldh a, [rLY]
-	cp rSCREEN_HEIGHT + 4
+	cp SCREEN_HEIGHT + 4
 	jr nz, .loop_1
 	
 	ld a, $03
 	ldh [rLCDC], a
 	
-	ld a, rPALETTE_1
+	ld a, PALETTE_1
 	ldh [rBGP], a
 	ldh [rOBP0], a
 	
-	ld a, rPALETTE_2
+	ld a, PALETTE_2
 	ldh [rOBP1], a
 	ld hl, rNR52
 	
-	ld a, rSOUND_ON
+	ld a, SOUND_ON
 	ldd [hl], a	; rNR51
 	
-	ld a, rUSE_ALL_CHANNELS
+	ld a, USE_ALL_CHANNELS
 	ldd [hl], a	; rNR50
-	ld [hl], rMASTER_VOLUME_MAX
+	ld [hl], MASTER_VOLUME_MAX
 	
 	ld a, $01
 	ld [rMBC], a
-	ld sp, rSP_INIT
+	ld sp, SP_INIT
 
 ; Flush WRAM Bank 1 (last page only)
 	xor a
@@ -377,10 +380,10 @@ Flush_VRAM::
 	dec b
 	jr nz, .loop_6	; Flush 128 bytes (Entire HRAM)
 	
-; Copy DMA Transfer routine into HRAM ($2a7f -> $ffb6)
-	ld c, $b6
-	ld b, $0c
-	ld hl, $2a7f
+; Copy DMA Transfer routine into HRAM
+	ld c, $b6	; Target location in HRAM
+	ld b, $0c	; Routine length
+	ld hl, $2a7f	; Source location in ROM
 .loop_7:
 	ldi a, [hl]
 	ldh [c], a
@@ -388,36 +391,41 @@ Flush_VRAM::
 	dec b
 	jr nz, .loop_7
 	
-	call func_2795
-	call func_7ff3
+	call Flush_BG1
+	call Sound_Init
+	
 	ld a, $09
-	ldh [$ff00 + $ff], a
-	ld a, $37
-	ldh [$ff00 + $c0], a
-	ld a, $1c
-	ldh [$ff00 + $c1], a
-	ld a, $24
-	ldh [$ff00 + $e1], a
-	ld a, $80
-	ldh [$ff00 + $40], a
-	ei
-	xor a
-	ldh [$ff00 + $0f], a
-	ldh [$ff00 + $4a], a
-	ldh [$ff00 + $4b], a
-	ldh [$ff00 + $06], a
+	ldh [rIE], a		; enable VBlank & Joystick Interrupt
 
-.l_02c4:
-	call func_29a6
-	call func_02f8
+; Set up a few game variables
+	ld a, GAME_TYPE_A
+	ldh [rGAME_TYPE], a
+	ld a, MUSIC_TYPE_A
+	ldh [rMUSIC_TYPE], a
+	ld a, MENU_COPYRIGHT_INIT
+	ldh [rGAME_STATUS], a
+	
+	ld a, LCDC_ON
+	ldh [rLCDC], a
+	
+	ei			; enable interrupts (VBlank will happen immediately)
+	
+	xor a
+	ldh [rIF], a		; disable all interrupt flags
+	ldh [rWY], a
+	ldh [rWX], a
+	ldh [rTMA], a
+
+.Main_Loop:
+	call Read_Joypad
+	call State_Machine
 	call func_7ff0
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	and $0f
 	cp $0f
 	jp z, .Screen_Setup
 	ld hl, $ffa6
 	ld b, $02
-
 .l_02db:
 	ld a, [hl]
 	and a
@@ -440,13 +448,72 @@ Flush_VRAM::
 	jr z, .l_02ed
 	xor a
 	ldh [$ff00 + $85], a
-	jp .l_02c4
+	jp .Main_Loop
 
 
-func_02f8::
-	ldh a, [$ff00 + $e1]
+State_Machine::
+	ldh a, [rGAME_STATUS]
 	rst 28
-	adc a, $1b
+
+; Big switch statement: 
+; (rst 28 jumps to following address, depending on current GAME_STATUS)
+
+	db ce, 1b	; MENU_IN_GAME 		=> 1bce
+	db e2, 1c	; MENU_GAME_OVER_INIT	=> 1ce2
+	db 44, 12	; MENU_ROCKET_1D	=> 1244
+	db 7b, 12	; MENU_ROCKET_1E	=> 127b
+	db 06, 1d	; MENU_GAME_OVER 	=> 1d06
+	db 26, 1d	; MENU_TYPE_B_WON	=> 1d26
+	db ae, 03	; MENU_TITLE_INIT 	=> 03ae
+	db 79, 04	; MENU_TITLE 		=> 0479
+	db 44, 14	; MENU_SELECT_TYPE_INIT => 1444
+	db 8c, 14	; (unused)
+	db 07, 1a	; MENU_IN_GAME_INIT 	=> 1a07
+	db c0, 1d	; MENU_SCORE_B		=> 1dc0
+	db 16, 1f	; (unknown) 		=> 1f16
+	db 1f, 1f	; MENU_LOST_ANIM	=> 1f1f
+	db 25, 15	; MENU_SELECT_TYPE	=> 1525
+	db b0, 14	; MENU_SELECT_MUSIC	=> 14b0
+	db 7b, 15	; MENU_LEVEL_A_INIT	=> 157b
+	db bf, 15	; MENU_LEVEL_A		=> 15bf
+	db 29, 16	; MENU_LEVEL_B_INIT	=> 1629
+	db 7a, 16	; MENU_LEVEL_B		=> 167a
+	db eb, 16	; MENU_HIGH_B		=> 16eb
+	db 13, 19	; MENU_HISCORE		=> 1913
+	db 77, 06	; MENU_VS_INIT		=> 0677
+	db 2c, 07	; MENU_VS_MODE		=> 072c
+	db 25, 08	; MENU_VS_GAME_INIT	=> 0825
+	db ef, 08	; MENU_VS_GAME		=> 08ef
+	db 31, 0b	; (unknown)		=> 0b31
+	db eb, 0c	; (unknown)		=> 0ceb
+	db d2, 0a	; (unknown)		=> 0ad2
+	db 32, 0d	; MENU_LUIGI_WON_INIT	=> 0d32
+	db 23, 0e	; MENU_LUIGI_LOST_INIT	=> 0e23
+	db 12, 11	; (unknown)		=> 1112
+	db 99, 0d	; MENU_LUIGI_WON	=> 0d99
+	db 8a, 0e	; MENU_LUIGI_LOST	=> 0e8a
+	db ce, 1d	; MENU_CELEBRATE	=> 1dce
+	db 41, 1e	; (unknown)		=> 1e41
+	db 69, 03	; MENU_COPYRIGHT_INIT	=> 0369
+	db 93, 03	; MENU_COPYRIGHT_1	=> 0393
+	db 67, 11	; MENU_ROCKET_1_INIT	=> 1167
+	db e6, 11	; MENU_ROCKET_1A	=> 11e6
+	db fc, 11	; MENU_ROCKET_1B	=> 11fc
+	db 1c, 12	; MENU_ROCKET_1C	=> 121c
+	db c7, 05	; (unknown)		=> 05c7
+	db f7, 05	; (unknown)		=> 05f7
+	db b3, 12	; MENU_ROCKET_1F	=> 12b3
+	db 05, 13	; MENU_ROCKET_1G	=> 1305
+	db 24, 13	; MENU_ROCKET_2A	=> 1324
+	db 51, 13	; MENU_ROCKET_2B	=> 1351
+	db 67, 13	; MENU_ROCKET_2C	=> 1367
+	db 7e, 13	; MENU_ROCKET_2D	=> 137e
+	db b5, 13	; MENU_ROCKET_2E	=> 13b5
+	db e5, 13	; MENU_ROCKET_2F	=> 13e5
+	db 1b, 13	; MENU_ROCKET_2_INIT	=> 131b
+	db a0, 03	; MENU_COPYRIGHT_2	=> 03a0
+ 	
+	
 	ldh [c], a
 	inc e
 	ld b, h
@@ -564,7 +631,7 @@ func_02f8::
 	ld a, $35
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	and a
 	jr nz, .l_03a9
 	ldh a, [$ff00 + $a6]
@@ -627,7 +694,7 @@ func_02f8::
 	ldh [$ff00 + $a6], a
 	ld a, $04
 	ldh [$ff00 + $c6], a
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	ret nz
 	ld a, $13
@@ -648,7 +715,7 @@ func_02f8::
 	ldh [$ff00 + $eb], a
 	ld a, $b0
 	ldh [$ff00 + $ec], a
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	cp $02
 	ld a, $02
 	jr nz, .l_045a
@@ -667,7 +734,7 @@ func_02f8::
 	ld a, $01
 
 .l_045a:
-	ldh [$ff00 + $e4], a
+	ldh [rUNKNOWN2], a
 	ld a, $0a
 	ldh [$ff00 + $e1], a
 	call func_2820
@@ -707,7 +774,7 @@ func_02f8::
 	jr .l_0509
 
 .l_04a2:
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	ld b, a
 	ldh a, [$ff00 + $c5]
 	bit 2, b
@@ -750,12 +817,12 @@ func_02f8::
 	ldh [$ff00 + $c2], a
 	ldh [$ff00 + $c3], a
 	ldh [$ff00 + $c4], a
-	ldh [$ff00 + $e4], a
+	ldh [rUNKNOWN2], a
 	ret
 
 .l_04e7:
 	push af
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	bit 7, a
 	jr z, .l_04f0
 	ldh [$ff00 + $f4], a
@@ -794,7 +861,7 @@ func_02f8::
 
 
 func_050c::
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	ret z
 	call func_0a98
@@ -802,7 +869,7 @@ func_050c::
 	ldh [$ff00 + $01], a
 	ld a, $80
 	ldh [$ff00 + $02], a
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr z, .l_052d
 	ld a, $33
@@ -815,7 +882,7 @@ func_050c::
 
 .l_052d:
 	ld hl, $ffb0
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	cp $02
 	ld b, $10
 	jr z, .l_053a
@@ -831,7 +898,7 @@ func_050c::
 
 
 func_0542::
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	ret z
 	ldh a, [$ff00 + $e9]
@@ -854,7 +921,7 @@ func_0542::
 	ldh a, [$ff00 + $ed]
 	xor b
 	and b
-	ldh [$ff00 + $81], a
+	ldh [rBUTTON_HIT], a
 	ld a, b
 	ldh [$ff00 + $ed], a
 	ldi a, [hl]
@@ -867,13 +934,13 @@ func_0542::
 
 .l_0571:
 	xor a
-	ldh [$ff00 + $81], a
+	ldh [rBUTTON_HIT], a
 
 .l_0574:
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	ldh [$ff00 + $ee], a
 	ldh a, [$ff00 + $ed]
-	ldh [$ff00 + $80], a
+	ldh [rBUTTON_DOWN], a
 	ret
 	xor a
 	ldh [$ff00 + $ed], a
@@ -882,13 +949,13 @@ func_0542::
 
 
 func_0583::
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	ret z
 	ldh a, [$ff00 + $e9]
 	cp $ff
 	ret nz
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	ld b, a
 	ldh a, [$ff00 + $ed]
 	cp b
@@ -919,14 +986,14 @@ func_0583::
 
 
 func_05b3::
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	ret z
 	ldh a, [$ff00 + $e9]
 	and a
 	ret nz
 	ldh a, [$ff00 + $ee]
-	ldh [$ff00 + $80], a
+	ldh [rBUTTON_DOWN], a
 	ret
 
 .l_05c0:
@@ -954,7 +1021,7 @@ func_05b3::
 	ldh [$ff00 + $d4], a
 	ldh [$ff00 + $d5], a
 	ldh [$ff00 + $e3], a
-	call func_7ff3
+	call Sound_Init
 	ld a, $2b
 	ldh [$ff00 + $e1], a
 	ret
@@ -973,7 +1040,7 @@ func_05b3::
 	jr .l_0620
 
 .l_0613:
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 0, a
 	jr nz, .l_0620
 	bit 3, a
@@ -1005,7 +1072,7 @@ func_05b3::
 	ret
 
 .l_0644:
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr nz, .l_066c
 	bit 0, a
@@ -1168,7 +1235,7 @@ func_05b3::
 	jr .l_07bd
 
 .l_0755:
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr z, .l_075f
 	ld a, $60
@@ -1951,7 +2018,7 @@ func_0b9b::
 	cp $29
 	jr z, .l_0c2e
 	ld a, $01
-	ld [$df7f], a
+	ld [rPAUSED], a
 	ldh [$ff00 + $ab], a
 	ldh a, [$ff00 + $cf]
 	ldh [$ff00 + $f1], a
@@ -2250,7 +2317,7 @@ func_0c8c::
 	jr .l_0dad
 
 .l_0d8b:
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr z, .l_0dad
 
@@ -2407,7 +2474,7 @@ func_0dbd::
 	jr .l_0e9e
 
 .l_0e7c:
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr z, .l_0e9e
 
@@ -2595,7 +2662,7 @@ func_0f6f::
 	ld hl, $55ac
 	ld bc, $1000
 	call func_27e4
-	call func_2795
+	call Flush_BG1
 	ld hl, $9800
 	ld de, $54e4
 	ld b, $04
@@ -2888,7 +2955,7 @@ func_10d8::
 	ld b, $27
 	ld c, $79
 	call func_113f
-	call func_7ff3
+	call Sound_Init
 	ldh a, [$ff00 + $d7]
 	cp $05
 	jr z, .l_113a
@@ -3286,7 +3353,7 @@ func_11b2::
 	ret
 	call func_2820
 	call func_27ad
-	call func_7ff3
+	call Sound_Init
 	call func_2293
 	ld a, $93
 	ldh [$ff00 + $40], a
@@ -3880,7 +3947,7 @@ func_1755::
 
 
 func_1766::
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	ld b, a
 	ldh a, [$ff00 + $a6]
 	and a
@@ -4293,9 +4360,9 @@ func_18fc::
 	call func_19fe
 
 .l_1944:
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	ld b, a
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	ld c, a
 	ld a, $17
 	bit 6, b
@@ -4545,7 +4612,7 @@ func_19ff::
 	and a
 	jr z, .l_1ae0
 	ld b, a
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	jr z, .l_1ad6
 	call func_1b1b
@@ -4808,14 +4875,14 @@ func_1b68::
 
 
 func_1c0d::
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	and $0f
 	cp $0f
 	jp z, .Screen_Setup
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	ret nz
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr z, .l_1bf4
 	ldh a, [$ff00 + $c5]
@@ -4828,7 +4895,7 @@ func_1c0d::
 	jr z, .l_1c5a
 	set 3, [hl]
 	ld a, $01
-	ld [$df7f], a
+	ld [rPAUSED], a
 	ld hl, $994e
 	ld de, $9d4e
 	ld b, $04
@@ -4856,7 +4923,7 @@ func_1c0d::
 .l_1c5a:
 	res 3, [hl]
 	ld a, $02
-	ld [$df7f], a
+	ld [rPAUSED], a
 	ld a, [$c0de]
 	and a
 	jr z, .l_1c4d
@@ -4872,7 +4939,7 @@ func_1c0d::
 	ldh [$ff00 + $ab], a
 	jr z, .l_1caa
 	ld a, $01
-	ld [$df7f], a
+	ld [rPAUSED], a
 	ldh a, [$ff00 + $d0]
 	ldh [$ff00 + $f2], a
 	ldh a, [$ff00 + $cf]
@@ -4911,7 +4978,7 @@ func_1c88::
 	ldh a, [$ff00 + $f1]
 	ldh [$ff00 + $cf], a
 	ld a, $02
-	ld [$df7f], a
+	ld [rPAUSED], a
 	xor a
 	ldh [$ff00 + $ab], a
 	ld hl, $98ee
@@ -4963,7 +5030,7 @@ func_1ccb::
 	ld a, $0d
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	bit 0, a
 	jr nz, .l_1d0f
 	bit 3, a
@@ -5023,7 +5090,7 @@ func_1ccb::
 	ld [$c210], a
 	call func_2683
 	call func_2696
-	call func_7ff3
+	call Sound_Init
 	ld a, $25
 	ldh [$ff00 + $9e], a
 	ld a, $0b
@@ -5285,7 +5352,7 @@ func_1d84::
 .l_1f12:
 	call func_25d9
 	ret
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	and a
 	ret z
 	ld a, $02
@@ -5476,7 +5543,7 @@ func_2007::
 	ld [hl], a
 	and $fc
 	ld c, a
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	jr nz, .l_2024
 	ldh a, [$ff00 + $c5]
@@ -5553,7 +5620,7 @@ func_2007::
 	ld a, [$c0c7]
 	and a
 	jr z, .l_2083
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	and $b0
 	cp $80
 	jr nz, .l_20a4
@@ -5578,7 +5645,7 @@ func_2007::
 
 
 func_209c::
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	and $b0
 	cp $80
 	jr z, .l_2071
@@ -5660,7 +5727,7 @@ func_209c::
 	ld a, [hl]
 	cp $01
 	jr nz, .l_2124
-	call func_7ff3
+	call Sound_Init
 	ld a, $01
 	ldh [$ff00 + $e1], a
 	ld a, $02
@@ -6291,7 +6358,7 @@ func_24bb::
 	ld l, $03
 	ld a, [hl]
 	ldh [$ff00 + $a0], a
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	ld b, a
 	bit 1, b
 	jr nz, .l_24e0
@@ -6338,9 +6405,9 @@ func_24bb::
 
 .l_2509:
 	ld hl, $c202
-	ldh a, [$ff00 + $81]
+	ldh a, [rBUTTON_HIT]
 	ld b, a
-	ldh a, [$ff00 + $80]
+	ldh a, [rBUTTON_DOWN]
 	ld c, a
 	ld a, [hl]
 	ldh [$ff00 + $a0], a
@@ -6889,17 +6956,18 @@ func_26b6::
 	rst 38
 	sbc a, e
 
+Flush_BG1::
+; Fill BG Map 1 entirely with value $2F
 
-func_2798::
-	ld bc, $0400
-
-.l_279b:
+	ld hl, $9bff	; End of BG Map Data 1
+	ld bc, $0400	; Size of BG Map Data 1
+.loop_8:
 	ld a, $2f
 	ldd [hl], a
 	dec bc
 	ld a, b
 	or c
-	jr nz, .l_279b
+	jr nz, .loop_8
 	ret
 
 
@@ -7376,40 +7444,34 @@ func_2820::
 	cpl
 
 
-func_29a6::
-	ld a, $20
-	ldh [$ff00 + $00], a
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
+Read_Joypad::
+	ld a, 1 << 5 	; select direction keys
+	ldh [rJOYP], a
+	rept 4
+	ldh a, [rJOYP]	; poll buttons multiple times
+	endr
+	cpl		; reverse bits (as pressed buttons are shown as 0's)
+	and $0f		; mask lower nibble
+	swap a		; move it to higher nibble
+	ld b, a		
+	
+	ld a, 1 << 4 	; select button keys
+	ldh [rJOYP], a
+	rept 10
+	ldh a, [rJOYP]
+	endr
 	cpl
 	and $0f
-	swap a
-	ld b, a
-	ld a, $10
-	ldh [$ff00 + $00], a
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	ldh a, [$ff00 + $00]
-	cpl
-	and $0f
-	or b
+	or b		; In register A: lower nibble = buttons, higher nibble = directional keys
+	
 	ld c, a
-	ldh a, [$ff00 + $80]
-	xor c
-	and c
-	ldh [$ff00 + $81], a
+	ldh a, [rBUTTON_DOWN]
+	xor c			; XOR+AND gate (only true, if "false -> true",
+	and c			; i.e. button pressed now, but wasn't pressed before)
+	ldh [rBUTTON_HIT], a
 	ld a, c
-	ldh [$ff00 + $80], a
-	ld a, $30
+	ldh [rBUTTON_DOWN], a
+	ld a, 1 << 5 & 1 << 4	; deselect both directional and button keys
 	ldh [$ff00 + $00], a
 	ret
 
@@ -8663,7 +8725,7 @@ func_2a89::
 	rst 38
 	reti
 	ld sp, $e2de
-	ldh [$ff00 + $e4], a
+	ldh [rUNKNOWN2], a
 	rst 38
 	reti
 	ld sp, $eedc
@@ -19374,7 +19436,7 @@ func_4fc0::
 	ld bc, $0001
 	nop
 	ld h, b
-	ldh [$ff00 + $80], a
+	ldh [rBUTTON_DOWN], a
 	add a, b
 	add a, b
 	add a, b
@@ -21037,25 +21099,23 @@ func_64d2::
 	ret
 
 .l_64d3:
-	push af
+	push af		; Push all registers on stack -> Long function ahead 
 	push bc
 	push de
 	push hl
-	ld a, [$df7f]
-	cp $01
-	jr z, .l_6524
+	ld a, [rPAUSED]
+	cp $01		
+	jr z, .pausing	 	; jump if is pausing now
 	cp $02
-	jr z, .l_655d
-	ld a, [$df7e]
+	jr z, .unpausing 	; jump if is unpausing now
+	ld a, [rPAUSE_CHIME]
 	and a
-	jr nz, .l_6563
-
+	jr nz, .pause_menu	; jump if in pause menu
 .l_64e8:
-	ldh a, [$ff00 + $e4]
+	ldh a, [rUNKNOWN2]
 	and a
 	jr z, .l_64fa
 	xor a
-
 .l_64ee:
 	ld [$dfe0], a
 	ld [$dfe8], a
@@ -21077,15 +21137,15 @@ func_64d2::
 	ld [$dfe8], a
 	ld [$dff0], a
 	ld [$dff8], a
-	ld [$df7f], a
+	ld [rPAUSED], a
 	pop hl
 	pop de
 	pop bc
 	pop af
 	ret
 
-.l_6524:
-	call func_69c7
+.pausing:
+	call fSound_Init_B
 	xor a
 	ld [$dfe1], a
 	ld [$dff1], a
@@ -21101,7 +21161,7 @@ func_64d2::
 	ld hl, $6ee9
 	call func_6998
 	ld a, $30
-	ld [$df7e], a
+	ld [rPAUSE_CHIME], a
 
 .l_6550:
 	ld hl, $657b
@@ -21114,13 +21174,13 @@ func_64d2::
 	ld hl, $657f
 	jr .l_6553
 
-.l_655d:
+.unpausing:
 	xor a
-	ld [$df7e], a
+	ld [rPAUSE_CHIME], a
 	jr .l_64e8
 
-.l_6563:
-	ld hl, $df7e
+.pause_menu:
+	ld hl, rPAUSE_CHIME
 	dec [hl]
 	ld a, [hl]
 	cp $28
@@ -21886,34 +21946,38 @@ func_6998::
 	ret
 
 
-func_69a5::
+Sound_Init_A::
 	xor a
-	ld [$dfe1], a
-	ld [$dfe9], a
-	ld [$dff1], a
-	ld [$dff9], a
-	ld [$df9f], a
-	ld [$dfaf], a
-	ld [$dfbf], a
-	ld [$dfcf], a
-	ld a, $ff
-	ldh [$ff00 + $25], a
+	ld [rSOUND1], a
+	ld [rSOUND2], a
+	ld [rSOUND3], a
+	ld [rSOUND4], a
+	ld [rSOUND5], a
+	ld [rSOUND6], a
+	ld [rSOUND7], a
+	ld [rSOUND8], a
+	
+	ld a, USE_ALL_CHANNELS
+	ldh [rNR51], a
+	
 	ld a, $03
-	ld [$df78], a
+	ld [rSOUND9], a
 
 
-func_69c7::
-	ld a, $08
-	ldh [$ff00 + $12], a
-	ldh [$ff00 + $17], a
-	ldh [$ff00 + $21], a
+Sound_Init_B::
+	ld a, ENVELOPE_NO_SOUND
+	ldh [rNR12], a
+	ldh [rNR22], a
+	ldh [rNR42], a
+	
 	ld a, $80
-	ldh [$ff00 + $14], a
-	ldh [$ff00 + $19], a
-	ldh [$ff00 + $23], a
+	ldh [rNR14], a	; Init channel 1
+	ldh [rNR24], a	; Init channel 2
+	ldh [rNR44], a	; Init channel 4
+	
 	xor a
-	ldh [$ff00 + $10], a
-	ldh [$ff00 + $1a], a
+	ldh [rNR10], a	; Turn off sweep
+	ldh [rNR30], a	; Turn off channel 3
 	ret
 
 
@@ -21965,7 +22029,7 @@ func_69fd::
 	ret
 
 .l_6a1d:
-	call func_69a5
+	call Sound_Init_A
 	ret
 
 
@@ -22143,7 +22207,7 @@ func_6b0d::
 
 
 func_6b13::
-	call func_69c7
+	call Sound_Init_B
 	xor a
 	ld [$df75], a
 	ld [$df77], a
@@ -22351,7 +22415,7 @@ func_6c0c::
 .l_6c3b:
 	ld hl, $dfe9
 	ld [hl], $00
-	call func_69a5
+	call Sound_Init_A
 	ret
 
 
@@ -26705,8 +26769,8 @@ func_7ff0::
 	jp .l_64d3
 
 
-func_7ff3::
-	jp $69a5
+Sound_Init::
+	jp Sound_Init_A
 	nop
 	nop
 	nop
