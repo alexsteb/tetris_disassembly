@@ -6,6 +6,7 @@ SCREEN_HEIGHT EQU 144  ; Visible Pixels before VBlank
 SCREEN_WIDTH  EQU 160  ; Visible Pixels before HBlank
 LCDC_ON       EQU $80  ; Turn LCDC on
 
+
 ; Sound constants
 SOUND_ON   EQU $80
 USE_ALL_CHANNELS   EQU $FF ; Set all audio channels to both output terminals (stereo)
@@ -13,6 +14,10 @@ MASTER_VOLUME_MAX  EQU $77 ; Set both output terminals to highest volume
 ENVELOPE_NO_SOUND  EQU $08 ; Sets an envelope to no sound and direction to "increase"
 
 ; RAM constants
+c0a3-c0aa contain data about line clearing !
+
+rLINE_CLEAR_START EQU $c0a3 ; $ca after clearing 1-3 line(s), $c9 after clearing 4 lines
+! rUNKNOWN3   EQU $c0a4 ; ..
 rSOUND1     EQU $dfe1 ; (Set whenever a new sound is about to be played)
 rSOUND2     EQU $dfe9 ; ?
 rSOUND3     EQU $dff1 ; ?
@@ -82,13 +87,25 @@ rPAUSED          EQU $df7f ; 00 = normal / paused, 01 = pause pressed, 02 = unpa
 rPAUSE_CHIME     EQU $df7e ; 00 = normal, 11 = final value in pause menu after countdown, 30 = initial value when pause pressed 
 
 ; HRAM variables
-rBUTTON_DOWN     EQU $ff80 ; Buttons currently pressed (lower nibble = buttons, higher nibble = directional keys)
-rBUTTON_HIT      EQU $ff81 ; Buttons pressed for the first time
+rBUTTON_DOWN     EQU $ff80 ; buttons currently pressed (lower nibble = buttons, higher nibble = directional keys)
+rBUTTON_HIT      EQU $ff81 ; buttons pressed for the first time
+rVBLANK_DONE     EQU $ff85 ; 1 = VBlank interrupt executed; 0 = Not executed yet
+
+rBLOCK_STATUS    EQU $ff98 ; runs from 1 to 3 when block hits ground; back to 0 before chime and line clear handling
+rCLEAR_PROGRESS  EQU $ff9c ; runs from 1 to 7 during line clear animation
 
 rUNKNOWN1        EQU $ffa4 ; probably unused
+rCOUNTDOWN       EQU $ffa6 ; various uses - counts down one per VBlank (~59.7 times a second)
+rCOUNTDOWN2      EQU $ffa7 ; various uses - counts down one per VBlank  = 4 seconds per byte (256 values)
+
 rGAME_TYPE       EQU $ffc0 ; $37 = Type A, $77 = Type B
 rMUSIC_TYPE      EQU $ffc1 ; $1c = Music A, $1d = Music B, $1e = Music C, $1f = Music off
+rPLAYERS         EQU $ffc5 ; 0 = 1 player, 1 = 2 players 
 rMUSIC_COUNTDOWN EQU $ffc6 ; countdown for title screen music - until demo game starts playing
+?                EQU $ffca ; related to hiscore entry
+?                EQU $ffcb ; ?Must be $29 to consider sending data in VBlank..
+rREQUEST_SERIAL_TRANSFER        EQU $ffce ; Request serial connection data transfer
+rSB_DATA         EQU $ffcf ; Holds the data to be sent via link cable
 rGAME_STATUS     EQU $ffe1 ; See table below:
     ; $00 = in-game (both game types)
     ; $01 = shortly before game over screen
@@ -145,6 +162,7 @@ rGAME_STATUS     EQU $ffe1 ; See table below:
     ; $34 = !shortly before rocket launch b
     ; $35 = copyright screen during second countdown
 
+rROW_UPDATE     EQU $ffe3 ; current line to move down (after removing line(s))
 rUNKNOWN2       EQU $ffe4 ; ?
 
 ; Variable value constants:
