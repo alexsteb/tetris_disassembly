@@ -106,10 +106,10 @@ func_006b::
 	ldh a, [$ff00 + $cb]
 	cp $29
 	ret z
-	ldh a, [$ff00 + $cf]
+	ldh a, [rSB_DATA]
 	ldh [$ff00 + $01], a
 	ld a, $ff
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ld a, $80
 	ldh [$ff00 + $02], a
 	ret
@@ -118,7 +118,7 @@ func_006b::
 	ldh a, [$ff00 + $cb]
 	cp $29
 	ret z
-	ldh a, [$ff00 + $cf]
+	ldh a, [rSB_DATA]
 	ldh [$ff00 + $01], a
 	ei
 	call func_0a98
@@ -193,26 +193,31 @@ SECTION "Main", ROM0
 	ld [hl], a
 	ret
 
-.l_017e:
-	push af
+; The VBlank interrupt handler, must occur once somewhen during the game-loop
+.VBlank:	
+	push af				; Store registers
 	push bc
 	push de
 	push hl
-	ldh a, [$ff00 + $ce]
+	
+	ldh a, [rREQUEST_SERIAL_TRANSFER]	; Transfer data only if requested
 	and a
-	jr z, .l_0199
-	ldh a, [$ff00 + $cb]
+	jr z, .skip_serial_connection
+	
+	ldh a, [$ff00 + $cb]			; ?
 	cp $29
-	jr nz, .l_0199
+	jr nz, .skip_serial_connection
+	
 	xor a
-	ldh [$ff00 + $ce], a
-	ldh a, [$ff00 + $cf]
-	ldh [$ff00 + $01], a
-	ld hl, $ff02
-	ld [hl], $81
+	ldh [rREQUEST_SERIAL_TRANSFER], a	; Clear request
+	ldh a, [rSB_DATA]			
+	ldh [rSB], a				; Send data to link cable
+	ld hl, rSC
+	ld [hl], $81				; Use internal clock (= this GB is the master)
+						; and request a data transfer (of rSB) to the other GB
 
-.l_0199:
-	call func_21e0
+.skip_serial_connection:
+	call clear_row_animation
 	call func_23cc
 	call func_23b7
 	call func_239e
@@ -237,7 +242,7 @@ SECTION "Main", ROM0
 	ld a, [$c0ce]
 	and a
 	jr z, .l_01fb
-	ldh a, [$ff00 + $98]
+	ldh a, [rBLOCK_STATUS]
 	cp $03
 	jr nz, .l_01fb
 	ld hl, $986d
@@ -256,7 +261,7 @@ SECTION "Main", ROM0
 	ldh [$ff00 + $43], a
 	ldh [$ff00 + $42], a
 	inc a
-	ldh [$ff00 + $85], a
+	ldh [rVBLANK_DONE], a
 	pop hl
 	pop de
 	pop bc
@@ -393,9 +398,14 @@ Flush_VRAM::
 	
 	call Flush_BG1
 	call Sound_Init
-	
-	ld a, $09
-	ldh [rIE], a		; enable VBlank & Joystick Interrupt
+
+rINTERRUPT_SERIAL EQU %00001001
+; * VBlank interrupt enabled
+; * Serial interrupt enabled
+; * everything else disabled
+
+	ld a, rINTERRUPT_SERIAL
+	ldh [rIE], a		; enable VBlank & Serial Interrupt
 
 ; Set up a few game variables
 	ld a, GAME_TYPE_A
@@ -408,46 +418,49 @@ Flush_VRAM::
 	ld a, LCDC_ON
 	ldh [rLCDC], a
 	
-	ei			; enable interrupts (VBlank will happen immediately)
+	ei			; enable interrupts (VBlank interrupt handler can occur now)
 	
 	xor a
-	ldh [rIF], a		; disable all interrupt flags
-	ldh [rWY], a
+	ldh [rIF], a		; clear all interrupt flags
+	ldh [rWY], a		; Set Window X & Y Position to initial
 	ldh [rWX], a
-	ldh [rTMA], a
+	ldh [rTMA], a		; Clear the timer modulo
 
 .Main_Loop:
 	call Read_Joypad
 	call State_Machine
 	call func_7ff0
+	
 	ldh a, [rBUTTON_DOWN]
 	and $0f
-	cp $0f
-	jp z, .Screen_Setup
-	ld hl, $ffa6
+	cp $0f			
+	jp z, .Screen_Setup	; if all directional keys are pressed, reset game
+	
+; Countdown both $ffa6 and $ffa7 by 1, if >0
+	ld hl, rCOUNTDOWN
 	ld b, $02
-.l_02db:
+.loop_8:
 	ld a, [hl]
 	and a
-	jr z, .l_02e0
-	dec [hl]
-
-.l_02e0:
+	jr z, .skip_1
+	dec [hl]		; if countdown is > 0, count one down
+.skip_1:
 	inc l
 	dec b
-	jr nz, .l_02db
-	ldh a, [$ff00 + $c5]
-	and a
-	jr z, .l_02ed
-	ld a, $09
-	ldh [$ff00 + $ff], a
+	jr nz, .loop_8
 
-.l_02ed:
-	ldh a, [$ff00 + $85]
+	ldh a, [rPLAYERS]
 	and a
-	jr z, .l_02ed
+	jr z, .wait_for_vblank
+	ld a, rINTERRUPT_SERIAL
+	ldh [rIE], a		; If in 2-player mode, enable serial interrupt
+.wait_for_vblank:
+	ldh a, [rVBLANK_DONE]
+	and a
+	jr z, .wait_for_vblank	; Loop until VBlank handler has finished executing
 	xor a
-	ldh [$ff00 + $85], a
+	ldh [rVBLANK_DONE], a
+	
 	jp .Main_Loop
 
 
@@ -512,103 +525,17 @@ State_Machine::
 	db e5, 13	; MENU_ROCKET_2F	=> 13e5
 	db 1b, 13	; MENU_ROCKET_2_INIT	=> 131b
 	db a0, 03	; MENU_COPYRIGHT_2	=> 03a0
- 	
-	
-	ldh [c], a
-	inc e
-	ld b, h
-	ld [de], a
-	ld a, e
-	ld [de], a
-
-.l_0303:
-	ld b, $1d
-	ld h, $1d
-	xor [hl]
-	inc bc
-	ld a, c
-	inc b
-	ld b, h
-	inc d
-	adc a, h
-	inc d
-	rlc a
-	ld a, [de]
-	ret nz
-	dec e
-	ld d, $1f
-	rr a
-	rr a
-	dec h
-	dec d
-	or b
-	inc d
-	ld a, e
-	dec d
-	cp a
-	dec d
-	add hl, hl
-	ld d, $7a
-	ld d, $eb
-	ld d, $13
-	add hl, de
-	ld [hl], a
-	ld b, $2c
-	rlc a
-	dec h
-	ld [$08e4], sp
-	ld sp, $eb0b
-	inc c
-	jp nc, .l_320a
-	dec c
-	inc hl
-	ld c, $12
-	ld de, $0d99
-	adc a, d
-	ld c, $ce
-	dec e
-	ld b, c
-	ld e, $69
-	inc bc
-	sub a, e
-	inc bc
-	ld h, a
-	ld de, $11e6
-	<error>
-	ld de, $121c
-	rst 0
-	dec b
-	rst 30
-	dec b
-	or e
-	ld [de], a
-	dec b
-	inc de
-	inc h
-	inc de
-	ld d, c
-	inc de
-	ld h, a
-	inc de
-	ld a, [hl]
-	inc de
-	or l
-	inc de
-	push hl
-	inc de
-	dec de
-	inc de
-	and b
-	inc bc
-	ld [$cd27], a
-	jr nz, .l_0394
+	db ea, 27	; (unknown)		=> 27ea
+ 
+ 
+MENU_COPYRIGHT_INIT::
+	call func_2820
 	call func_27d7
 	ld de, $4a07
 	call func_27eb
 	call func_178a
 	ld hl, $c300
 	ld de, $6450
-
 .l_037e:
 	ld a, [de]
 	ldi [hl], a
@@ -619,44 +546,50 @@ State_Machine::
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ld a, $fa
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $25
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $a6]
+
+
+MENU_COPYRIGHT_1::
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $fa
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $35
 	ldh [$ff00 + $e1], a
 	ret
+	
+	
+MENU_COPYRIGHT_2::
 	ldh a, [rBUTTON_HIT]
 	and a
 	jr nz, .l_03a9
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-
 .l_03a9:
 	ld a, $06
 	ldh [$ff00 + $e1], a
 	ret
+	
+MENU_TITLE_INIT::
 	call func_2820
 	xor a
 	ldh [$ff00 + $e9], a
-	ldh [$ff00 + $98], a
-	ldh [$ff00 + $9c], a
+	ldh [rBLOCK_STATUS], a
+	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
 	ldh [$ff00 + $fb], a
 	ldh [$ff00 + $9f], a
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	ldh [$ff00 + $c7], a
 	call func_2293
 	call func_2651
 	call func_27d7
 	ld hl, $c800
-
 .l_03ce:
 	ld a, $2f
 	ldi [hl], a
@@ -670,7 +603,6 @@ State_Machine::
 	ld hl, $ca41
 	ld b, $0c
 	ld a, $8e
-
 .l_03e9:
 	ldi [hl], a
 	dec b
@@ -691,7 +623,7 @@ State_Machine::
 	ld a, $07
 	ldh [$ff00 + $e1], a
 	ld a, $7d
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $04
 	ldh [$ff00 + $c6], a
 	ldh a, [rUNKNOWN2]
@@ -707,7 +639,7 @@ State_Machine::
 	ld a, $09
 	ldh [$ff00 + $c2], a
 	xor a
-	ldh [$ff00 + $c5], a
+	ldh [rPLAYERS], a
 	ldh [$ff00 + $b0], a
 	ldh [$ff00 + $ed], a
 	ldh [$ff00 + $ea], a
@@ -745,18 +677,23 @@ State_Machine::
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ret
+	
+	
+func_0474::
 	ld a, $ff
 	ldh [$ff00 + $e9], a
 	ret
-	ldh a, [$ff00 + $a6]
+	
+	
+MENU_TITLE::	
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_0488
 	ld hl, $ffc6
 	dec [hl]
 	jr z, .l_041f
 	ld a, $7d
-	ldh [$ff00 + $a6], a
-
+	ldh [rCOUNTDOWN], a
 .l_0488:
 	call func_0a98
 	ld a, $55
@@ -772,11 +709,10 @@ State_Machine::
 	xor a
 	ldh [$ff00 + $cc], a
 	jr .l_0509
-
 .l_04a2:
 	ldh a, [rBUTTON_HIT]
 	ld b, a
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	bit 2, b
 	jr nz, .l_04f3
 	bit 4, b
@@ -798,7 +734,6 @@ State_Machine::
 	ldh [$ff00 + $01], a
 	ld a, $81
 	ldh [$ff00 + $02], a
-
 .l_04cd:
 	ldh a, [$ff00 + $cc]
 	and a
@@ -806,19 +741,18 @@ State_Machine::
 	ldh a, [$ff00 + $cb]
 	and a
 	jr z, .l_0509
-
 .l_04d7:
 	ld a, $2a
-
 .l_04d9:
 	ldh [$ff00 + $e1], a
 	xor a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ldh [$ff00 + $c2], a
 	ldh [$ff00 + $c3], a
 	ldh [$ff00 + $c4], a
 	ldh [rUNKNOWN2], a
 	ret
+
 
 .l_04e7:
 	push af
@@ -835,7 +769,7 @@ State_Machine::
 	xor $01
 
 .l_04f5:
-	ldh [$ff00 + $c5], a
+	ldh [rPLAYERS], a
 	and a
 	ld a, $10
 	jr z, .l_04fe
@@ -1000,6 +934,7 @@ func_05b3::
 	ld hl, $ff02
 	set 7, [hl]
 	jr .l_05d1
+.l_05c7:
 	ld a, $03
 	ldh [$ff00 + $cd], a
 	ldh a, [$ff00 + $cb]
@@ -1011,20 +946,23 @@ func_05b3::
 	ld a, $80
 	ld [$c210], a
 	call func_2671
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	xor a
 	ldh [$ff00 + $01], a
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ldh [$ff00 + $dc], a
 	ldh [$ff00 + $d2], a
 	ldh [$ff00 + $d3], a
 	ldh [$ff00 + $d4], a
 	ldh [$ff00 + $d5], a
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	call Sound_Init
 	ld a, $2b
 	ldh [$ff00 + $e1], a
 	ret
+	
+	
+func_05f7::
 	ldh a, [$ff00 + $cb]
 	cp $29
 	jr z, .l_0613
@@ -1057,7 +995,7 @@ func_05b3::
 	xor a
 	ldh [$ff00 + $cc], a
 	ld a, $39
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ldh a, [$ff00 + $d0]
 	cp $50
 	jr z, .l_0664
@@ -1082,15 +1020,15 @@ func_05b3::
 	ret z
 	xor a
 	ldh [$ff00 + $cc], a
-	ldh a, [$ff00 + $cf]
+	ldh a, [rSB_DATA]
 	cp $50
 	jr z, .l_0664
 	ldh a, [$ff00 + $c1]
 
 .l_065d:
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ld a, $01
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	ret
 
 .l_0664:
@@ -1133,16 +1071,16 @@ func_05b3::
 	ld a, $2f
 	call func_1fdd
 	ld a, $03
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	xor a
 	ldh [$ff00 + $01], a
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ldh [$ff00 + $dc], a
 	ldh [$ff00 + $d2], a
 	ldh [$ff00 + $d3], a
 	ldh [$ff00 + $d4], a
 	ldh [$ff00 + $d5], a
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 
 .l_06bf:
 	ldh [$ff00 + $cc], a
@@ -1224,7 +1162,7 @@ func_05b3::
 
 .l_0743:
 	ldh a, [$ff00 + $ad]
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	xor a
 	ldh [$ff00 + $cc], a
 
@@ -1245,7 +1183,7 @@ func_05b3::
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_07b4
-	ldh a, [$ff00 + $cf]
+	ldh a, [rSB_DATA]
 	cp $60
 	jr nz, .l_07a2
 
@@ -1293,11 +1231,11 @@ func_05b3::
 	ldh a, [$ff00 + $ac]
 
 .l_07ac:
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	xor a
 	ldh [$ff00 + $cc], a
 	inc a
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 
 .l_07b4:
 	ld de, $c200
@@ -1386,28 +1324,28 @@ func_080e::
 .l_0828:
 	xor a
 	ld [$c210], a
-	ldh [$ff00 + $98], a
-	ldh [$ff00 + $9c], a
+	ldh [rBLOCK_STATUS], a
+	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
 	ldh [$ff00 + $fb], a
 	ldh [$ff00 + $9f], a
 	ldh [$ff00 + $cc], a
 	ldh [$ff00 + $01], a
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	ldh [$ff00 + $d0], a
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ldh [$ff00 + $d1], a
 	call func_2651
 	call func_2293
 	call func_1ff2
 	xor a
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	call func_178a
 	ld de, $537c
 	push de
 	ld a, $01
 	ldh [$ff00 + $a9], a
-	ldh [$ff00 + $c5], a
+	ldh [rPLAYERS], a
 	call func_27eb
 
 .l_085e:
@@ -1649,7 +1587,7 @@ func_080e::
 	ld a, $1c
 	ldh [$ff00 + $e1], a
 	ld a, $02
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	ld a, $03
 	ldh [$ff00 + $cd], a
 	ldh a, [$ff00 + $cb]
@@ -1850,7 +1788,7 @@ func_0aa1::
 	ret
 	ld a, $01
 	ldh [$ff00 + $ff], a
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	and a
 	jr nz, .l_0b02
 	ld b, $44
@@ -1908,7 +1846,7 @@ func_0aa1::
 .l_0b2a:
 	ld [hl], $2f
 	ld a, $03
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	ret
 	ld a, $01
 	ldh [$ff00 + $ff], a
@@ -1932,14 +1870,14 @@ func_0aa1::
 	and a
 	jr z, .l_0b73
 	ld a, $77
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ldh [$ff00 + $b1], a
 	ld a, $aa
 	ldh [$ff00 + $d1], a
 	ld a, $1b
 	ldh [$ff00 + $e1], a
 	ld a, $05
-	ldh [$ff00 + $a7], a
+	ldh [rCOUNTDOWN2], a
 	jr .l_0b83
 
 .l_0b73:
@@ -1947,7 +1885,7 @@ func_0aa1::
 	cp $01
 	jr nz, .l_0b94
 	ld a, $aa
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ldh [$ff00 + $b1], a
 	ld a, $77
 	ldh [$ff00 + $d1], a
@@ -1961,7 +1899,7 @@ func_0aa1::
 	ldh a, [$ff00 + $cb]
 	cp $29
 	jr nz, .l_0b94
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 
 .l_0b94:
 	call func_0bf0
@@ -2020,11 +1958,11 @@ func_0b9b::
 	ld a, $01
 	ld [rPAUSED], a
 	ldh [$ff00 + $ab], a
-	ldh a, [$ff00 + $cf]
+	ldh a, [rSB_DATA]
 	ldh [$ff00 + $f1], a
 	xor a
 	ldh [$ff00 + $f2], a
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	call func_1ccb
 	ret
 
@@ -2092,13 +2030,13 @@ func_0bf0::
 	cp $29
 	ldh a, [$ff00 + $b1]
 	jr nz, .l_0c4d
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ld a, $01
-	ldh [$ff00 + $ce], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	ret
 
 .l_0c4d:
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ret
 
 .l_0c50:
@@ -2124,7 +2062,7 @@ func_0bf0::
 	ld a, $1b
 	ldh [$ff00 + $e1], a
 	ld a, $05
-	ldh [$ff00 + $a7], a
+	ldh [rCOUNTDOWN2], a
 	ld c, $01
 	ld b, $12
 	jr .l_0c1c
@@ -2213,12 +2151,12 @@ func_0c8c::
 	dec c
 	jr nz, .l_0ccd
 	ld a, $02
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	ldh [$ff00 + $d4], a
 	xor a
 	ldh [$ff00 + $d3], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $01
@@ -2249,7 +2187,7 @@ func_0c8c::
 	ld c, $43
 	call func_113f
 	xor a
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	ldh a, [$ff00 + $d1]
 	cp $aa
 	ld a, $1e
@@ -2259,11 +2197,11 @@ func_0c8c::
 .l_0d27:
 	ldh [$ff00 + $e1], a
 	ld a, $28
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $1d
 	ldh [$ff00 + $c6], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ldh a, [$ff00 + $ef]
@@ -2286,7 +2224,7 @@ func_0c8c::
 	ld c, $03
 	call func_1776
 	ld a, $19
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ldh a, [$ff00 + $ef]
 	and a
 	jr z, .l_0d65
@@ -2323,8 +2261,8 @@ func_0c8c::
 
 .l_0d91:
 	ld a, $60
-	ldh [$ff00 + $cf], a
-	ldh [$ff00 + $ce], a
+	ldh [rSB_DATA], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	jr .l_0db6
 	ld a, $01
 	ldh [$ff00 + $ff], a
@@ -2351,13 +2289,13 @@ func_0c8c::
 
 
 func_0dbd::
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_0de5
 	ld hl, $ffc6
 	dec [hl]
 	ld a, $19
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	call func_0f60
 	ld hl, $c201
 	ld a, [hl]
@@ -2410,17 +2348,17 @@ func_0dbd::
 	ret
 
 .l_0e13:
-	ldh a, [$ff00 + $a7]
+	ldh a, [rCOUNTDOWN2]
 	and a
 	ret nz
 	ld a, $0f
-	ldh [$ff00 + $a7], a
+	ldh [rCOUNTDOWN2], a
 	ld hl, $c223
 	ld a, [hl]
 	xor $01
 	ld [hl], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ldh a, [$ff00 + $ef]
@@ -2443,7 +2381,7 @@ func_0dbd::
 	ld c, $02
 	call func_1776
 	ld a, $19
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ldh a, [$ff00 + $ef]
 	and a
 	jr z, .l_0e56
@@ -2480,8 +2418,8 @@ func_0dbd::
 
 .l_0e82:
 	ld a, $60
-	ldh [$ff00 + $cf], a
-	ldh [$ff00 + $ce], a
+	ldh [rSB_DATA], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	jr .l_0ea7
 	ld a, $01
 	ldh [$ff00 + $ff], a
@@ -2508,13 +2446,13 @@ func_0dbd::
 
 
 func_0eae::
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_0ecf
 	ld hl, $ffc6
 	dec [hl]
 	ld a, $19
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	call func_0f60
 	ld hl, $c211
 	ld a, [hl]
@@ -2568,11 +2506,11 @@ func_0eae::
 	ret
 
 .l_0f07:
-	ldh a, [$ff00 + $a7]
+	ldh a, [rCOUNTDOWN2]
 	and a
 	ret nz
 	ld a, $0f
-	ldh [$ff00 + $a7], a
+	ldh [rCOUNTDOWN2], a
 	ld hl, $c203
 	ld a, [hl]
 	xor $01
@@ -2946,7 +2884,7 @@ func_10d8::
 	or c
 	ld a, $01
 	ldh [$ff00 + $ff], a
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	call func_178a
@@ -2984,8 +2922,8 @@ func_113f::
 	cp b
 	jr z, .l_115a
 	ld a, $02
-	ldh [$ff00 + $cf], a
-	ldh [$ff00 + $ce], a
+	ldh [rSB_DATA], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 
 .l_1158:
 	pop hl
@@ -2993,15 +2931,15 @@ func_113f::
 
 .l_115a:
 	ld a, c
-	ldh [$ff00 + $cf], a
-	ldh [$ff00 + $ce], a
+	ldh [rSB_DATA], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	ret
 
 .l_1160:
 	cp c
 	ret z
 	ld a, b
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	pop hl
 	ret
 	call func_11b2
@@ -3030,7 +2968,7 @@ func_113f::
 	ld a, $db
 	ldh [$ff00 + $40], a
 	ld a, $bb
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $27
 	ldh [$ff00 + $e1], a
 	ld a, $10
@@ -3058,7 +2996,7 @@ func_11b2::
 	ld b, $07
 	call func_1437
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld hl, $c210
@@ -3066,11 +3004,11 @@ func_11b2::
 	ld l, $20
 	ld [hl], $00
 	ld a, $ff
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $28
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr z, .l_1205
 	call func_13fa
@@ -3084,11 +3022,11 @@ func_11b2::
 	ld l, $23
 	ld [hl], $35
 	ld a, $ff
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $2f
 	call func_1fd7
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr z, .l_1225
 	call func_13fa
@@ -3107,11 +3045,14 @@ func_11b2::
 	ld hl, $9d29
 	call func_19ff
 	ret
-	ldh a, [$ff00 + $a6]
+	
+	
+MENU_ROCKET_1D::
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_1277
 	ld a, $0a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld hl, $c201
 	dec [hl]
 	ld a, [hl]
@@ -3138,11 +3079,14 @@ func_11b2::
 .l_1277:
 	call func_13fa
 	ret
-	ldh a, [$ff00 + $a6]
+	
+	
+MENU_ROCKET_1E::
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_129d
 	ld a, $0a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld hl, $c211
 	dec [hl]
 	ld l, $01
@@ -3159,11 +3103,11 @@ func_11b2::
 	ret
 
 .l_129d:
-	ldh a, [$ff00 + $a7]
+	ldh a, [rCOUNTDOWN2]
 	and a
 	jr nz, .l_12ad
 	ld a, $06
-	ldh [$ff00 + $a7], a
+	ldh [rCOUNTDOWN2], a
 	ld hl, $c213
 	ld a, [hl]
 	xor $01
@@ -3173,11 +3117,11 @@ func_11b2::
 	ld a, $03
 	call func_2673
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $06
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ldh a, [$ff00 + $ca]
 	sub a, $82
 	ld e, a
@@ -3208,7 +3152,7 @@ func_11b2::
 	cp $92
 	ret nz
 	ld a, $ff
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $2d
 	ldh [$ff00 + $e1], a
 	ret
@@ -3226,7 +3170,7 @@ func_11b2::
 	ld l, $bc
 	dec a
 	ld c, $3e
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	call func_2820
@@ -3237,7 +3181,7 @@ func_11b2::
 	ld a, $05
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $2e
@@ -3257,13 +3201,13 @@ func_11b2::
 	ld a, $db
 	ldh [$ff00 + $40], a
 	ld a, $bb
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $2f
 	ldh [$ff00 + $e1], a
 	ld a, $10
 	ld [$dfe8], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld hl, $c210
@@ -3271,11 +3215,11 @@ func_11b2::
 	ld l, $20
 	ld [hl], $00
 	ld a, $a0
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $30
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr z, .l_1370
 	call func_13fa
@@ -3285,15 +3229,15 @@ func_11b2::
 	ld a, $31
 	ldh [$ff00 + $e1], a
 	ld a, $80
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $2f
 	call func_1fd7
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_13b1
 	ld a, $0a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld hl, $c201
 	dec [hl]
 	ld a, [hl]
@@ -3320,11 +3264,11 @@ func_11b2::
 .l_13b1:
 	call func_13fa
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_13cf
 	ld a, $0a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld hl, $c211
 	dec [hl]
 	ld l, $01
@@ -3337,11 +3281,11 @@ func_11b2::
 	ret
 
 .l_13cf:
-	ldh a, [$ff00 + $a7]
+	ldh a, [rCOUNTDOWN2]
 	and a
 	jr nz, .l_13df
 	ld a, $06
-	ldh [$ff00 + $a7], a
+	ldh [rCOUNTDOWN2], a
 	ld hl, $c213
 	ld a, [hl]
 	xor $01
@@ -3363,11 +3307,11 @@ func_11b2::
 
 
 func_13fa::
-	ldh a, [$ff00 + $a7]
+	ldh a, [rCOUNTDOWN2]
 	and a
 	ret nz
 	ld a, $0a
-	ldh [$ff00 + $a7], a
+	ldh [rCOUNTDOWN2], a
 	ld a, $03
 	ld [$dff8], a
 	ld b, $02
@@ -3550,7 +3494,7 @@ func_14b0::
 
 .l_1509:
 	push af
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	and a
 	jr z, .l_1512
 	pop af
@@ -3949,11 +3893,11 @@ func_1755::
 func_1766::
 	ldh a, [rBUTTON_HIT]
 	ld b, a
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $10
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, [de]
 	xor $80
 	ld [de], a
@@ -4192,7 +4136,7 @@ func_1800::
 	ld a, e
 	ldh [$ff00 + $ca], a
 	xor a
-	ldh [$ff00 + $9c], a
+	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $c6], a
 	ld a, $01
 	ld [$dfe8], a
@@ -4344,14 +4288,14 @@ func_18fc::
 	ld d, a
 	ldh a, [$ff00 + $ca]
 	ld e, a
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	jr nz, .l_1944
 	ld a, $07
-	ldh [$ff00 + $a6], a
-	ldh a, [$ff00 + $9c]
+	ldh [rCOUNTDOWN], a
+	ldh a, [rCLEAR_PROGRESS]
 	xor $01
-	ldh [$ff00 + $9c], a
+	ldh [rCLEAR_PROGRESS], a
 	ld a, [de]
 	jr z, .l_1941
 	ld a, $2f
@@ -4513,8 +4457,8 @@ func_19ff::
 	call func_2820
 	xor a
 	ld [$c210], a
-	ldh [$ff00 + $98], a
-	ldh [$ff00 + $9c], a
+	ldh [rBLOCK_STATUS], a
+	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
 	ldh [$ff00 + $fb], a
 	ldh [$ff00 + $9f], a
@@ -4523,7 +4467,7 @@ func_19ff::
 	call func_1ff2
 	call func_2651
 	xor a
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	call func_178a
 	ldh a, [$ff00 + $c0]
 	ld de, $3ff7
@@ -4807,7 +4751,7 @@ func_1b68::
 	ld [hl], a
 	push hl
 	push af
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	and a
 	jr nz, .l_1bad
 	ld de, $3000
@@ -4839,6 +4783,9 @@ func_1b68::
 	cp $2c
 	jr nz, .l_1bc2
 	ret
+	
+	
+MENU_IN_GAME::
 	call func_1c0d
 	ldh a, [$ff00 + $ab]
 	and a
@@ -4885,7 +4832,7 @@ func_1c0d::
 	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr z, .l_1bf4
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	and a
 	jr nz, .l_1c6a
 	ld hl, $ff40
@@ -4942,7 +4889,7 @@ func_1c0d::
 	ld [rPAUSED], a
 	ldh a, [$ff00 + $d0]
 	ldh [$ff00 + $f2], a
-	ldh a, [$ff00 + $cf]
+	ldh a, [rSB_DATA]
 	ldh [$ff00 + $f1], a
 	call func_1ccb
 	ret
@@ -4960,14 +4907,14 @@ func_1c88::
 	cp $29
 	jr nz, .l_1ca1
 	ld a, $94
-	ldh [$ff00 + $cf], a
-	ldh [$ff00 + $ce], a
+	ldh [rSB_DATA], a
+	ldh [rREQUEST_SERIAL_TRANSFER], a
 	pop hl
 	ret
 
 .l_1ca1:
 	xor a
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ldh a, [$ff00 + $d0]
 	cp $94
 	jr z, .l_1cc9
@@ -4976,7 +4923,7 @@ func_1c88::
 	ldh a, [$ff00 + $f2]
 	ldh [$ff00 + $d0], a
 	ldh a, [$ff00 + $f1]
-	ldh [$ff00 + $cf], a
+	ldh [rSB_DATA], a
 	ld a, $02
 	ld [rPAUSED], a
 	xor a
@@ -5013,33 +4960,37 @@ func_1ccb::
 	add hl, de
 	ld a, [bc]
 	ld e, $1c
-	ld c, $3e
-	add a, b
+	
+	
+MENU_GAME_OVER_INIT::
+	ld a, $80
 	ld [$c200], a
 	ld [$c210], a
 	call func_2683
 	call func_2696
 	xor a
-	ldh [$ff00 + $98], a
-	ldh [$ff00 + $9c], a
+	ldh [rBLOCK_STATUS], a
+	ldh [rCLEAR_PROGRESS], a
 	call func_2293
 	ld a, $87
 	call func_1fd7
 	ld a, $46
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $0d
 	ldh [$ff00 + $e1], a
 	ret
+	
+	
+MENU_GAME_OVER::
 	ldh a, [rBUTTON_HIT]
 	bit 0, a
 	jr nz, .l_1d0f
 	bit 3, a
 	ret z
-
 .l_1d0f:
 	xor a
-	ldh [$ff00 + $e3], a
-	ldh a, [$ff00 + $c5]
+	ldh [rROW_UPDATE], a
+	ldh a, [rPLAYERS]
 	and a
 	ld a, $16
 	jr nz, .l_1d23
@@ -5048,11 +4999,13 @@ func_1ccb::
 	ld a, $10
 	jr z, .l_1d23
 	ld a, $12
-
 .l_1d23:
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $a6]
+	
+	
+MENU_TYPE_B_WON::
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld hl, $c802
@@ -5084,7 +5037,7 @@ func_1ccb::
 
 .l_1d66:
 	ld a, $80
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $80
 	ld [$c200], a
 	ld [$c210], a
@@ -5147,15 +5100,15 @@ func_1d84::
 	dec b
 	jr nz, .l_1db1
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $01
 	ld [$c0c6], a
 	ld a, $05
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld hl, $c802
@@ -5209,7 +5162,7 @@ func_1d84::
 	ld a, $25
 	ldh [$ff00 + $9e], a
 	ld a, $1b
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $23
 	ldh [$ff00 + $e1], a
 	ret
@@ -5224,7 +5177,7 @@ func_1d84::
 	ld a, $0a
 	call func_2673
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	cp $14
 	jr z, .l_1e3b
 	and a
@@ -5314,7 +5267,7 @@ func_1d84::
 	ld hl, $99a5
 	call func_2a36
 	xor a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	pop de
 	ld hl, $c0a0
 	call func_0166
@@ -5358,16 +5311,16 @@ func_1d84::
 	ld a, $02
 	ldh [$ff00 + $e1], a
 	ret
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $04
 	ld [$dfe8], a
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	and a
 	jr z, .l_1f37
 	ld a, $3f
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $1b
 	ldh [$ff00 + $cc], a
 	jr .l_1f6e
@@ -5409,7 +5362,7 @@ func_1d84::
 	ld a, b
 	ldh [$ff00 + $f3], a
 	ld a, $90
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $34
 	ldh [$ff00 + $e1], a
 	ret
@@ -5442,7 +5395,7 @@ func_1f91::
 	ldh a, [$ff00 + $e1]
 	and a
 	ret nz
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $05
 	ret nz
 	ld hl, $c0ac
@@ -5488,7 +5441,7 @@ func_1f91::
 func_1fd7::
 	push af
 	ld a, $02
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	pop af
 
 
@@ -5546,10 +5499,9 @@ func_2007::
 	ldh a, [rUNKNOWN2]
 	and a
 	jr nz, .l_2024
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	and a
 	jr z, .l_2041
-
 .l_2024:
 	ld h, $c3
 	ldh a, [$ff00 + $b0]
@@ -5560,7 +5512,6 @@ func_2007::
 	cp $c4
 	jr nz, .l_2033
 	ld hl, $c300
-
 .l_2033:
 	ld a, l
 	ldh [$ff00 + $b0], a
@@ -5570,17 +5521,13 @@ func_2007::
 	or $80
 	ldh [$ff00 + $d3], a
 	jr .l_2065
-
 .l_2041:
 	ld h, $03
-
 .l_2043:
-	ldh a, [$ff00 + $04]
+	ldh a, [rDIV]
 	ld b, a
-
 .l_2046:
 	xor a
-
 .l_2047:
 	dec b
 	jr z, .l_2054
@@ -5628,13 +5575,13 @@ func_2007::
 	ld [$c0c7], a
 
 .l_2083:
-	ldh a, [$ff00 + $a7]
+	ldh a, [rCOUNTDOWN2]
 	and a
 	jr nz, .l_20b1
-	ldh a, [$ff00 + $98]
+	ldh a, [rBLOCK_STATUS]
 	and a
 	jr nz, .l_20b1
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	and a
 	jr nz, .l_20b1
 	ld a, $03
@@ -5664,10 +5611,10 @@ func_209c::
 	ret
 
 .l_20b5:
-	ldh a, [$ff00 + $98]
+	ldh a, [rBLOCK_STATUS]
 	cp $03
 	ret z
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	and a
 	ret nz
 	ldh a, [$ff00 + $9a]
@@ -5688,7 +5635,7 @@ func_209c::
 	ld [hl], a
 	call func_2683
 	ld a, $01
-	ldh [$ff00 + $98], a
+	ldh [rBLOCK_STATUS], a
 	ld [$c0c7], a
 	ldh a, [$ff00 + $e5]
 	and a
@@ -5759,14 +5706,14 @@ func_209c::
 
 
 func_213e::
-	ldh a, [$ff00 + $98]
+	ldh a, [rBLOCK_STATUS]
 	cp $02
 	ret nz
 	ld a, $02
 	ld [$dff8], a
 	xor a
 	ldh [$ff00 + $a0], a
-	ld de, $c0a3
+	ld de, rLINE_CLEAR_START
 	ld hl, $c842
 	ld b, $10
 
@@ -5799,9 +5746,9 @@ func_213e::
 	dec b
 	jr nz, .l_2153
 	ld a, $03
-	ldh [$ff00 + $98], a
+	ldh [rBLOCK_STATUS], a
 	dec a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ldh a, [$ff00 + $a0]
 	and a
 	ret z
@@ -5871,105 +5818,125 @@ func_213e::
 	xor a
 	ldh [$ff00 + $9e], a
 	jr .l_21aa
-	ldh a, [$ff00 + $98]
+
+
+; When rows are completed (and RAM values $c0a3 to $c0aa are set to indicate where)
+; - Between every state change a countdown of 10 draw cycles (~ 0.15 secs) is run.
+; - Function kicks off with rBLOCK_STATUS set to 3
+; - rCLEAR_PROGRESS starts with 0 and is increased by 1 every run, until 7
+; - on odd numbers the original blocks are displayed,
+; - on even numbers dark blocks replace them
+; - on 6, blocks are replaced by white blocks
+; - when it reaches 7, rBLOCK_STATUS and rCLEAR_PROGRESS are set to 0, rROW_UPDATE is set to 1
+; - Countdown is set to 13
+
+clear_row_animation::
+	ldh a, [rBLOCK_STATUS]
 	cp $03
-	ret nz
-	ldh a, [$ff00 + $a6]
+	ret nz				; Return if not right at end of block placement handling
+	
+	ldh a, [rCOUNTDOWN]
 	and a
-	ret nz
-	ld de, $c0a3
-	ldh a, [$ff00 + $9c]
-	bit 0, a
-	jr nz, .l_222e
+	ret nz				; Return if there is a countdown running
+	
+	ld de, rLINE_CLEAR_START
+	ldh a, [rCLEAR_PROGRESS]
+	bit 0, a			; Check if lowest bit of rCLEAR_PROGRESS is set
+	jr nz, .unfill_block_rows	; Jump if rCLEAR_PROGRESS = 1,3,5 or 7
+	
 	ld a, [de]
 	and a
-	jr z, .l_2248
+	jr z, .nothing_to_clear		; Jump if line is clear	
 
-.l_21f6:
-	sub a, $30
-	ld h, a
+
+
+; At RAM addresses $c0a3 to $c0aa lie the VRAM starting map addresses for the
+; to be removed block lines. (The higher byte needs to be reduced by $30 first)
+; i.e.: The second to last line is to be cleared, the first block on that row has
+; the map address of $9A02. 
+; It is therefore saved at $c0a3 as $ca02.
+
+.fill_block_rows:
+	sub a, $30		
+	ld h, a				; Get the first block's address' high byte
+	inc de
+	ld a, [de]				
+	ld l, a				; Get the first block's address' low byte
+	ldh a, [rCLEAR_PROGRESS]	
+	cp $06						
+	ld a, $8c			
+	jr nz, .dark_blocks		; if the clearing progress is in state 6 (= almost done)
+	ld a, $2f			; fill line with white blocks (tile 2f)
+.dark_blocks:				; otherwise use dark blocks (tile 8c)
+	ld c, $0a			; 10 = width of tetris block line		
+.loop_10:				
+	ldi [hl], a			; fill whole line of tile map with chosen block
+	dec c				
+	jr nz, .loop_10			
 	inc de
 	ld a, [de]
-	ld l, a
-	ldh a, [$ff00 + $9c]
-	cp $06
-	ld a, $8c
-	jr nz, .l_2206
-	ld a, $2f
-
-.l_2206:
-	ld c, $0a
-
-.l_2208:
-	ldi [hl], a
-	dec c
-	jr nz, .l_2208
-	inc de
-	ld a, [de]
 	and a
-	jr nz, .l_21f6
-
-.l_2211:
-	ldh a, [$ff00 + $9c]
+	jr nz, .fill_block_rows		; check if another line needs to be cleared, then loop	
+.increase_clear_progress:
+	ldh a, [rCLEAR_PROGRESS]
 	inc a
-	ldh [$ff00 + $9c], a
+	ldh [rCLEAR_PROGRESS], a	; go to next clearing state (different block filling)
 	cp $07
-	jr z, .l_221f
+	jr z, .fill_state_7
 	ld a, $0a
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ret
 
-.l_221f:
+.fill_state_7:
 	xor a
-	ldh [$ff00 + $9c], a
+	ldh [rCLEAR_PROGRESS], a
 	ld a, $0d
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $01
-	ldh [$ff00 + $e3], a
-
-.l_222a:
+	ldh [rROW_UPDATE], a
+.clear_block_status:
 	xor a
-	ldh [$ff00 + $98], a
+	ldh [rBLOCK_STATUS], a
 	ret
 
-.l_222e:
-	ld a, [de]
-	ld h, a
-	sub a, $30
-	ld c, a
+.unfill_block_rows:
+	ld a, [de]	; ([de] still points to the first block of the first line to be removed)
+	ld h, a		
+	sub a, $30	
+	ld c, a		; set bc to the correct RAM location (where all tiles are saved)
 	inc de
 	ld a, [de]
-	ld l, a
-	ld b, $0a
-
-.l_2238:
+	ld l, a		; set hl to the correct VRAM location (where the displayed tilemap is saved)
+	ld b, $0a	; 10 = number of rows
+.loop_11:
 	ld a, [hl]
 	push hl
 	ld h, c
-	ld [hl], a
+	ld [hl], a	; move all ten tiles from RAM to VRAM
 	pop hl
 	inc hl
 	dec b
-	jr nz, .l_2238
+	jr nz, .loop_11
+	
 	inc de
 	ld a, [de]
 	and a
-	jr nz, .l_222e
-	jr .l_2211
+	jr nz, .unfill_block_rows	; check if another line needs to be restored, then loop
+	jr .increase_clear_progress
 
-.l_2248:
+.nothing_to_clear:
 	call func_2007
-	jr .l_222a
+	jr .clear_block_status
 
 
 func_224d::
-	ldh a, [$ff00 + $a6]
+	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $01
 	ret nz
-	ld de, $c0a3
+	ld de, rLINE_CLEAR_START
 	ld a, [de]
 
 .l_225a:
@@ -6016,12 +5983,12 @@ func_224d::
 	jr nz, .l_2287
 	call func_2293
 	ld a, $02
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	ret
 
 
 func_2293::
-	ld hl, $c0a3
+	ld hl, rLINE_CLEAR_START
 	xor a
 	ld b, $09
 
@@ -6030,55 +5997,55 @@ func_2293::
 	dec b
 	jr nz, .l_2299
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $02
 	ret nz
 	ld hl, $9a22
 	ld de, $ca22
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $03
 	ret nz
 	ld hl, $9a02
 	ld de, $ca02
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $04
 	ret nz
 	ld hl, $99e2
 	ld de, $c9e2
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $05
 	ret nz
 	ld hl, $99c2
 	ld de, $c9c2
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $06
 	ret nz
 	ld hl, $99a2
 	ld de, $c9a2
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $07
 	ret nz
 	ld hl, $9982
 	ld de, $c982
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $08
 	ret nz
 	ld hl, $9962
 	ld de, $c962
 	call func_24ac
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	and a
 	ldh a, [$ff00 + $e1]
 	jr nz, .l_2315
@@ -6099,56 +6066,56 @@ func_2293::
 	ld a, $05
 	ld [$dfe0], a
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $09
 	ret nz
 	ld hl, $9942
 	ld de, $c942
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $0a
 	ret nz
 	ld hl, $9922
 	ld de, $c922
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $0b
 	ret nz
 	ld hl, $9902
 	ld de, $c902
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $0c
 	ret nz
 	ld hl, $98e2
 	ld de, $c8e2
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $0d
 	ret nz
 	ld hl, $98c2
 	ld de, $c8c2
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $0e
 	ret nz
 	ld hl, $98a2
 	ld de, $c8a2
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $0f
 	ret nz
 	ld hl, $9882
 	ld de, $c882
 	call func_24ac
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $10
 	ret nz
 	ld hl, $9862
@@ -6156,7 +6123,7 @@ func_2293::
 	call func_24ac
 	call func_244b
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $11
 	ret nz
 	ld hl, $9842
@@ -6167,7 +6134,7 @@ func_2293::
 	ld a, $01
 	ldh [$ff00 + $e0], a
 	ret
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	cp $12
 	ret nz
 	ld hl, $9822
@@ -6176,7 +6143,10 @@ func_2293::
 	ld hl, $986d
 	call func_243b
 	ret
-	ldh a, [$ff00 + $e3]
+
+
+func_23cc::
+	ldh a, [rROW_UPDATE]
 	cp $13
 	ret nz
 	ld [$c0c7], a
@@ -6184,14 +6154,13 @@ func_2293::
 	ld de, $c802
 	call func_24ac
 	xor a
-	ldh [$ff00 + $e3], a
-	ldh a, [$ff00 + $c5]
+	ldh [rROW_UPDATE], a
+	ldh a, [rPLAYERS]
 	and a
 	ldh a, [$ff00 + $e1]
 	jr nz, .l_242f
 	and a
 	ret nz
-
 .l_23e9:
 	ld hl, $994e
 	ld de, $ff9f
@@ -6202,7 +6171,6 @@ func_2293::
 	ld hl, $9950
 	ld de, $ff9e
 	ld c, $01
-
 .l_23ff:
 	call func_2a3c
 	ldh a, [$ff00 + $c0]
@@ -6212,10 +6180,10 @@ func_2293::
 	and a
 	jr nz, .l_242b
 	ld a, $64
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	ld a, $02
 	ld [$dfe8], a
-	ldh a, [$ff00 + $c5]
+	ldh a, [rPLAYERS]
 	and a
 	jr z, .l_241e
 	ldh [$ff00 + $d5], a
@@ -6227,7 +6195,6 @@ func_2293::
 	ld a, $05
 	jr nz, .l_2428
 	ld a, $22
-
 .l_2428:
 	ldh [$ff00 + $e1], a
 	ret
@@ -6344,9 +6311,9 @@ func_24ac::
 	inc e
 	dec b
 	jr nz, .l_24ae
-	ldh a, [$ff00 + $e3]
+	ldh a, [rROW_UPDATE]
 	inc a
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	ret
 
 
@@ -6514,7 +6481,7 @@ func_2573::
 
 
 func_25a1::
-	ldh a, [$ff00 + $98]
+	ldh a, [rBLOCK_STATUS]
 	cp $01
 	ret nz
 	ld hl, $c010
@@ -6552,7 +6519,7 @@ func_25a1::
 
 .l_25cf:
 	ld a, $02
-	ldh [$ff00 + $98], a
+	ldh [rBLOCK_STATUS], a
 	ld hl, $c200
 	ld [hl], $80
 	ret
@@ -6632,7 +6599,7 @@ func_25d9::
 
 .l_263a:
 	ld a, $21
-	ldh [$ff00 + $a6], a
+	ldh [rCOUNTDOWN], a
 	xor a
 	ld [$c0c6], a
 	ld a, [$c0c5]
@@ -6961,13 +6928,13 @@ Flush_BG1::
 
 	ld hl, $9bff	; End of BG Map Data 1
 	ld bc, $0400	; Size of BG Map Data 1
-.loop_8:
+.loop_9:
 	ld a, $2f
 	ldd [hl], a
 	dec bc
 	ld a, b
 	or c
-	jr nz, .loop_8
+	jr nz, .loop_9
 	ret
 
 
@@ -7075,7 +7042,7 @@ func_2804::
 .l_281a:
 	pop hl
 	ld a, $02
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	ret
 
 
@@ -8011,7 +7978,7 @@ func_2a89::
 	ld l, $ef
 	ldh a, [$ff00 + $86]
 	ld l, $ef
-	ldh a, [$ff00 + $98]
+	ldh a, [rBLOCK_STATUS]
 	ld l, $ef
 	ldh a, [$ff00 + $a8]
 	ld l, $ef
@@ -8729,7 +8696,7 @@ func_2a89::
 	rst 38
 	reti
 	ld sp, $eedc
-	ldh [$ff00 + $e3], a
+	ldh [rROW_UPDATE], a
 	rst 38
 	reti
 	ld sp, $e6e5
