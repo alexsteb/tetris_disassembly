@@ -63,73 +63,88 @@ Serial::
 	pop af
 	reti
 
+; Small switch statement: 
+; (rst 28 jumps to following address, depending on current $ff00 + $cd)
+
 func_006b::
 	ldh a, [$ff00 + $cd]
 	rst 28
 	
-	db 78, 00, 9f, 00, a4, 00, ba, 00, ea, 27
+	db 78, 00	; => 0078
+	db 9f, 00	; => 009f
+	db a4, 00	; => 00a4
+	db ba, 00	; => 00ba
+	db ea, 27	; => 27ea
 	
 .l_0078:
-	ldh a, [$ff00 + $e1]
-	cp $07
+	ldh a, [rGAME_STATUS]
+	cp MENU_TITLE
 	jr z, .l_0086
-	cp $06
+	
+	cp MENU_TITLE_INIT
 	ret z
-	ld a, $06
-	ldh [$ff00 + $e1], a
+	
+	ld a, MENU_TITLE_INIT
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_0086:
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	cp $55
 	jr nz, .l_0094
 	ld a, $29
 	ldh [$ff00 + $cb], a
 	ld a, $01
 	jr .l_009c
-
 .l_0094:
 	cp $29
 	ret nz
 	ld a, $55
 	ldh [$ff00 + $cb], a
 	xor a
-
 .l_009c:
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 	ret
-	ldh a, [$ff00 + $01]
+
+func_009f::
+	ldh a, [rSB]
 	ldh [$ff00 + $d0], a
 	ret
-	ldh a, [$ff00 + $01]
+	
+func_00a4::
+	ldh a, [rSB]
 	ldh [$ff00 + $d0], a
 	ldh a, [$ff00 + $cb]
 	cp $29
 	ret z
 	ldh a, [rSB_DATA]
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $ff
 	ldh [rSB_DATA], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 	ret
-	ldh a, [$ff00 + $01]
+
+func_00ba::
+	ldh a, [rSB]
 	ldh [$ff00 + $d0], a
 	ldh a, [$ff00 + $cb]
 	cp $29
 	ret z
 	ldh a, [rSB_DATA]
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ei
 	call func_0a98
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 	ret
+	
+func_00d0::
 	ldh a, [$ff00 + $cd]
 	cp $02
 	ret nz
 	xor a
-	ldh [$ff00 + $0f], a
+	ldh [rIF], a		; Clear all interrupt flags
 	ei
 	ret
 	
@@ -160,11 +175,10 @@ SECTION "Main", ROM0
 	call func_29e3
 
 .l_0156:
-	ldh a, [$ff00 + $41]
+	ldh a, [rLCDC_STAT]
 	and $03
 	jr nz, .l_0156
 	ld b, [hl]
-
 .l_015d:
 	ldh a, [$ff00 + $41]
 	and $03
@@ -172,6 +186,7 @@ SECTION "Main", ROM0
 	ld a, [hl]
 	and b
 	ret
+	
 	ld a, e
 	add a, [hl]
 	daa
@@ -529,54 +544,57 @@ State_Machine::
  
  
 MENU_COPYRIGHT_INIT::
-	call func_2820
-	call func_27d7
-	ld de, $4a07
-	call func_27eb
-	call func_178a
-	ld hl, $c300
+	call WAIT_FOR_VBLANK
+	call COPY_TITLE_TILES
+	ld de, $4a07		; Starting address of copyright screen tile map in ROM
+	call COPY_TILEMAP
+	call CLEAR_RAM_C000_TO_C0A0
+	
+	ld hl, $c300		; Copy some values into $c300+. Seems to be serial related
 	ld de, $6450
-.l_037e:
+.loop_12:
 	ld a, [de]
 	ldi [hl], a
 	inc de
 	ld a, h
 	cp $c4
-	jr nz, .l_037e
-	ld a, $d3
-	ldh [$ff00 + $40], a
-	ld a, $fa
+	jr nz, .loop_12
+	
+	ld a, LCDC_STANDARD		
+	ldh [rLCDC], a
+	ld a, $fa		; ~ 4 seconds
 	ldh [rCOUNTDOWN], a
-	ld a, $25
-	ldh [$ff00 + $e1], a
+	ld a, MENU_COPYRIGHT_1
+	ldh [rGAME_STATUS], a
 	ret
 
-
+; Wait until previous countdown is done, set a new one and change the game status to MENU_COPYRIGHT_2
 MENU_COPYRIGHT_1::
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-	ld a, $fa
+	ld a, $fa		; ~ 4 seconds
 	ldh [rCOUNTDOWN], a
-	ld a, $35
-	ldh [$ff00 + $e1], a
+	ld a, MENU_COPYRIGHT_2
+	ld [rGAME_STATUS], a
 	ret
 	
 	
+; Wait until either previous countdown (4 secs) is done, or anz button was hit, then change game status to MENU_TITLE_INIT
 MENU_COPYRIGHT_2::
 	ldh a, [rBUTTON_HIT]
 	and a
-	jr nz, .l_03a9
+	jr nz, .skip_2
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-.l_03a9:
-	ld a, $06
-	ldh [$ff00 + $e1], a
+.skip_2:
+	ld a, MENU_TITLE_INIT
+	ld [rGAME_STATUS], a
 	ret
 	
 MENU_TITLE_INIT::
-	call func_2820
+	call WAIT_FOR_VBLANK
 	xor a
 	ldh [$ff00 + $e9], a
 	ldh [rBLOCK_STATUS], a
@@ -608,8 +626,8 @@ MENU_TITLE_INIT::
 	dec b
 	jr nz, .l_03e9
 	ld de, $4b6f
-	call func_27eb
-	call func_178a
+	call COPY_TILEMAP
+	call CLEAR_RAM_C000_TO_C0A0
 	ld hl, $c000
 	ld [hl], $80
 	inc l
@@ -669,11 +687,11 @@ MENU_TITLE_INIT::
 	ldh [rUNKNOWN2], a
 	ld a, $0a
 	ldh [$ff00 + $e1], a
-	call func_2820
+	call WAIT_FOR_VBLANK
 	call func_27ad
 	ld de, $4cd7
-	call func_27eb
-	call func_178a
+	call COPY_TILEMAP
+	call CLEAR_RAM_C000_TO_C0A0
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ret
@@ -1032,7 +1050,7 @@ func_05f7::
 	ret
 
 .l_0664:
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	ld a, $16
 	ldh [$ff00 + $e1], a
 	ret
@@ -1063,11 +1081,11 @@ func_05f7::
 	jr nz, .l_068f
 
 .l_0696:
-	call func_2820
+	call WAIT_FOR_VBLANK
 	call func_27ad
 	ld de, $5214
-	call func_27eb
-	call func_178a
+	call COPY_TILEMAP
+	call CLEAR_RAM_C000_TO_C0A0
 	ld a, $2f
 	call func_1fdd
 	ld a, $03
@@ -1188,7 +1206,7 @@ func_05f7::
 	jr nz, .l_07a2
 
 .l_076a:
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 
 .l_076d:
 	ldh a, [$ff00 + $d6]
@@ -1319,7 +1337,7 @@ func_080e::
 	ld hl, $0802
 	call func_1755
 	ret
-	call func_2820
+	call WAIT_FOR_VBLANK
 
 .l_0828:
 	xor a
@@ -1340,18 +1358,18 @@ func_080e::
 	call func_1ff2
 	xor a
 	ldh [rROW_UPDATE], a
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	ld de, $537c
 	push de
 	ld a, $01
 	ldh [$ff00 + $a9], a
 	ldh [rPLAYERS], a
-	call func_27eb
+	call COPY_TILEMAP
 
 .l_085e:
 	pop de
 	ld hl, $9c00
-	call func_27ee
+	call COPY_TILEMAP_B
 	ld de, $2839
 	ld hl, $9c63
 	ld c, $0a
@@ -2596,7 +2614,7 @@ func_0f60::
 
 
 func_0f6f::
-	call func_2820
+	call WAIT_FOR_VBLANK
 	ld hl, $55ac
 	ld bc, $1000
 	call func_27e4
@@ -2604,10 +2622,10 @@ func_0f6f::
 	ld hl, $9800
 	ld de, $54e4
 	ld b, $04
-	call func_27f0
+	call COPY_TILEMAP_FEWER_ROWS
 	ld hl, $9980
 	ld b, $06
-	call func_27f0
+	call COPY_TILEMAP_FEWER_ROWS
 	ldh a, [$ff00 + $cb]
 	cp $29
 	jr nz, .l_0fb9
@@ -2732,7 +2750,7 @@ func_0f6f::
 .l_1062:
 	ld a, $d3
 	ldh [$ff00 + $40], a
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	ret
 
 
@@ -2887,7 +2905,7 @@ func_10d8::
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	xor a
 	ldh [$ff00 + $ef], a
 	ld b, $27
@@ -2977,7 +2995,7 @@ func_113f::
 
 
 func_11b2::
-	call func_2820
+	call WAIT_FOR_VBLANK
 	ld hl, $55ac
 	ld bc, $1000
 	call func_27e4
@@ -2986,7 +3004,7 @@ func_11b2::
 	ld hl, $9dc0
 	ld de, $51c4
 	ld b, $04
-	call func_27f0
+	call COPY_TILEMAP_FEWER_ROWS
 	ld hl, $9cec
 	ld de, $1429
 	ld b, $07
@@ -3173,7 +3191,7 @@ MENU_ROCKET_1E::
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-	call func_2820
+	call WAIT_FOR_VBLANK
 	call func_27ad
 	call func_2293
 	ld a, $93
@@ -3295,7 +3313,7 @@ MENU_ROCKET_1E::
 	ld a, $03
 	call func_2673
 	ret
-	call func_2820
+	call WAIT_FOR_VBLANK
 	call func_27ad
 	call Sound_Init
 	call func_2293
@@ -3371,11 +3389,11 @@ func_1437::
 
 
 func_144f::
-	call func_2820
+	call WAIT_FOR_VBLANK
 	call func_27ad
 	ld de, $4cd7
-	call func_27eb
-	call func_178a
+	call COPY_TILEMAP
+	call CLEAR_RAM_C000_TO_C0A0
 	ld hl, $c200
 	ld de, $26cf
 	ld c, $02
@@ -3576,11 +3594,11 @@ func_1517::
 .l_1577:
 	ld a, $0f
 	jr .l_1572
-	call func_2820
+	call WAIT_FOR_VBLANK
 	ld de, $4e3f
-	call func_27eb
+	call COPY_TILEMAP
 	call func_18fc
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	ld hl, $c200
 	ld de, $26db
 	ld c, $01
@@ -3678,10 +3696,10 @@ func_1517::
 	ld h, b
 	ld d, b
 	ld [hl], b
-	call func_2820
+	call WAIT_FOR_VBLANK
 	ld de, $4fa7
-	call func_27eb
-	call func_178a
+	call COPY_TILEMAP
+	call CLEAR_RAM_C000_TO_C0A0
 	ld hl, $c200
 	ld de, $26e1
 	ld c, $02
@@ -3924,15 +3942,14 @@ func_1776::
 	ret
 
 
-func_178a::
+CLEAR_RAM_C000_TO_C0A0::
 	xor a
 	ld hl, $c000
 	ld b, $a0
-
-.l_1790:
+.loop_16:
 	ldi [hl], a
 	dec b
-	jr nz, .l_1790
+	jr nz, .loop_16
 	ret
 
 
@@ -4209,13 +4226,10 @@ func_18ca::
 	ld hl, $99a4
 	ld de, $c9a4
 	ld c, $06
-
 .l_18d6:
 	push hl
-
 .l_18d7:
 	ld b, $06
-
 .l_18d9:
 	ld a, [de]
 	ldi [hl], a
@@ -4239,11 +4253,8 @@ func_18ca::
 	add a, d
 	ld d, a
 	jr .l_18d6
-
 .l_18f7:
 	pop hl
-
-
 func_18f8::
 	xor a
 	ldh [$ff00 + $e8], a
@@ -4454,7 +4465,7 @@ func_19ff::
 	jr nz, $19ff
 	ld [hl], b
 	ret
-	call func_2820
+	call WAIT_FOR_VBLANK
 	xor a
 	ld [$c210], a
 	ldh [rBLOCK_STATUS], a
@@ -4468,7 +4479,7 @@ func_19ff::
 	call func_2651
 	xor a
 	ldh [rROW_UPDATE], a
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	ldh a, [$ff00 + $c0]
 	ld de, $3ff7
 	ld hl, $ffc3
@@ -4484,10 +4495,10 @@ func_19ff::
 	ldh [$ff00 + $e6], a
 	ld a, [hl]
 	ldh [$ff00 + $a9], a
-	call func_27eb
+	call COPY_TILEMAP
 	pop de
 	ld hl, $9c00
-	call func_27ee
+	call COPY_TILEMAP_B
 	ld de, $2839
 	ld hl, $9c63
 	ld c, $0a
@@ -5114,7 +5125,7 @@ func_1d84::
 	ld hl, $c802
 	ld de, $510f
 	call func_2804
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	ld hl, $c200
 	ld de, $2735
 	ld c, $0a
@@ -5219,7 +5230,7 @@ func_1d84::
 	ld a, [$dfe9]
 	and a
 	ret nz
-	call func_178a
+	call CLEAR_RAM_C000_TO_C0A0
 	ldh a, [$ff00 + $c4]
 	cp $05
 	ld a, $26
@@ -6938,85 +6949,89 @@ Flush_BG1::
 	ret
 
 
-func_27a4::
+; copy all tiles as specified in registers de (target), hl (source) and bc (length) 
+COPY_TILES::
 	ldi a, [hl]
 	ld [de], a
 	inc de
 	dec bc
 	ld a, b
 	or c
-	jr nz, $27a4
+	jr nz, COPY_TILES
 	ret
 
 
 func_27ad::
-	call func_27c3
+	call COPY_CHARACTERS
 	ld bc, $00a0
-	call func_27a4
-	ld hl, $323f
-	ld de, $8300
+	call COPY_TILES
+	ld hl, $323f		; address of in-game tiles in memory
+	ld de, $8300		; not starting at $8000 -> Keeping character tiles
 	ld bc, $0d00
-	call func_27a4
+	call COPY_TILES		; Copy in-game tiles (blocks, walls, GUI, celebration screens)
 	ret
 
 
-func_27c3::
-	ld hl, $415f
-	ld bc, $0138
-	ld de, $8000
-
-.l_27cc:
+; copy characters such as numbers, letters and .,-"
+COPY_CHARACTERS::
+	ld hl, $415f		; address of (black-white) character set in ROM
+	ld bc, $0138		; length of data set
+	ld de, $8000		; Starting address of tile data in VRAM
+.loop_14:
 	ldi a, [hl]
 	ld [de], a
-	inc de
-	ld [de], a
-	inc de
+	inc de			; copy each byte at $415f twice into $8000,
+	ld [de], a		; because characters are stored as only black and white
+	inc de			; but the GB uses two bytes per character to allow for 4 colors
 	dec bc
 	ld a, b
 	or c
-	jr nz, .l_27cc
+	jr nz, .loop_14
 	ret
 
 
-func_27d7::
-	call func_27c3
-	ld bc, $0da0
-	call func_27a4
+COPY_TITLE_TILES::
+	call COPY_CHARACTERS
+	ld bc, $0da0		; length of symbol data set (starting right after characters)
+	call COPY_TILES		; copy all title image tiles (picture of Moscow cathedral)
 	ret
+	
+	
 	ld bc, $1000
 
 
 func_27e4::
 	ld de, $8000
-	call func_27a4
+	call COPY_TILES
 	ret
 
 
-func_27eb::
+; Takes a ROM address (de) and copies the full tilemap into Tilemap A (starting at $9800)
+COPY_TILEMAP::
 	ld hl, $9800
-
-
-func_27ee::
-	ld b, $12
-
-
-func_27f0::
+	
+; Allows for a unique tilemap starting address - is only ever used for Tilemap B (starting at $9C00)
+COPY_TILEMAP_B::
+	ld b, $12		; = full 18 rows of tiles
+	
+; Allows for unique tilemap and a custom number of rows (less than the full 18)
+COPY_TILEMAP_FEWER_ROWS::
 	push hl
-	ld c, $14
-
-.l_27f3:
+	ld c, $14		; = full 20 columns of tiles
+.loop_15:
 	ld a, [de]
 	ldi [hl], a
 	inc de
 	dec c
-	jr nz, .l_27f3
+	jr nz, .loop_15
+	
 	pop hl
 	push de
 	ld de, $0020
-	add hl, de
+	add hl, de		; Add $20 to target address, to skip area of tile map outside the window
 	pop de
 	dec b
-	jr nz, $27f0
+	jr nz, COPY_TILEMAP_FEWER_ROWS
 	ret
 
 
@@ -7046,22 +7061,25 @@ func_2804::
 	ret
 
 
-func_2820::
-	ldh a, [$ff00 + $ff]
-	ldh [$ff00 + $a1], a
-	res 0, a
-	ldh [$ff00 + $ff], a
 
-.l_2828:
-	ldh a, [$ff00 + $44]
-	cp $91
-	jr nz, .l_2828
-	ldh a, [$ff00 + $40]
+WAIT_FOR_VBLANK::
+	ldh a, [rIE]
+	ldh [rIE_TEMP], a	
+	res 0, a		
+	ldh [rIE], a		; turn off V-Blank interrupt
+.loop_13:
+	ldh a, [rLY]		; loop until in V-Blank area
+	cp SCREEN_HEIGHT + 1
+	jr nz, .loop_13
+	
+	ldh a, [rLCDC]
 	and $7f
-	ldh [$ff00 + $40], a
-	ldh a, [$ff00 + $a1]
-	ldh [$ff00 + $ff], a
+	ldh [rLCDC], a		; turn off LCDC (keep other settings in rLCDC)
+	
+	ldh a, [rIE_TEMP]
+	ldh [rIE], a
 	ret
+	
 	cpl
 	cpl
 	ld de, $1d12
@@ -7443,7 +7461,7 @@ Read_Joypad::
 	ret
 
 
-func_29e3::
+func_29e3::  ; Shutdown routine?
 	ldh a, [$ff00 + $b2]
 	sub a, $10
 	srl a
@@ -7471,6 +7489,8 @@ func_29e3::
 	ld a, l
 	ldh [$ff00 + $b4], a
 	ret
+	
+	
 	ldh a, [$ff00 + $b5]
 	ld d, a
 	ldh a, [$ff00 + $b4]
