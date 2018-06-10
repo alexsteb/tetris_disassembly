@@ -2,9 +2,13 @@
 SP_INIT  EQU $cfff ; Initial location of Stack Pointer
 
 ; Screen constants
-SCREEN_HEIGHT EQU 144  ; Visible Pixels before VBlank
-SCREEN_WIDTH  EQU 160  ; Visible Pixels before HBlank
+SCREEN_HEIGHT EQU 144  ; Visible Pixels before VBlank ($90)
+SCREEN_WIDTH  EQU 160  ; Visible Pixels before HBlank ($A0)
 LCDC_ON       EQU $80  ; Turn LCDC on
+LCDC_STANDARD EQU $d3  ; LCDC, BG, Sprites on, Window Tile Map starts at $9c00, 
+                       ; BG & Window Tile Data starts at $8000,
+                       ; BG Tile Map Display starts at $9800,
+                       ; OBJ (Sprite) Size is set to 8x8 pixels
 
 
 ; Sound constants
@@ -93,6 +97,8 @@ rVBLANK_DONE     EQU $ff85 ; 1 = VBlank interrupt executed; 0 = Not executed yet
 
 rBLOCK_STATUS    EQU $ff98 ; runs from 1 to 3 when block hits ground; back to 0 before chime and line clear handling
 rCLEAR_PROGRESS  EQU $ff9c ; runs from 1 to 7 during line clear animation
+
+rIE_TEMP         EQU $ffa1 ; used for temporary storage of IE ($ffff)
 
 rUNKNOWN1        EQU $ffa4 ; probably unused
 rCOUNTDOWN       EQU $ffa6 ; various uses - counts down one per VBlank (~59.7 times a second)
