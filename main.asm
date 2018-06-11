@@ -134,7 +134,7 @@ func_00ba::
 	ldh a, [rSB_DATA]
 	ldh [rSB], a
 	ei
-	call func_0a98
+	call WASTE_TIME
 	ld a, $80
 	ldh [rSC], a
 	ret
@@ -425,8 +425,10 @@ rINTERRUPT_SERIAL EQU %00001001
 ; Set up a few game variables
 	ld a, GAME_TYPE_A
 	ldh [rGAME_TYPE], a
+	
 	ld a, MUSIC_TYPE_A
 	ldh [rMUSIC_TYPE], a
+	
 	ld a, MENU_COPYRIGHT_INIT
 	ldh [rGAME_STATUS], a
 	
@@ -548,7 +550,7 @@ MENU_COPYRIGHT_INIT::
 	call COPY_TITLE_TILES
 	ld de, $4a07		; Starting address of copyright screen tile map in ROM
 	call COPY_TILEMAP
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	
 	ld hl, $c300		; Copy some values into $c300+. Seems to be serial related
 	ld de, $6450
@@ -601,7 +603,7 @@ MENU_TITLE_INIT::
 	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
 	ldh [$ff00 + $fb], a
-	ldh [$ff00 + $9f], a
+	ldh [rLINES_CLEARED2], a
 	ldh [rROW_UPDATE], a
 	ldh [$ff00 + $c7], a
 	call func_2293
@@ -627,35 +629,41 @@ MENU_TITLE_INIT::
 	jr nz, .l_03e9
 	ld de, $4b6f
 	call COPY_TILEMAP
-	call CLEAR_RAM_C000_TO_C0A0
-	ld hl, $c000
-	ld [hl], $80
+	call CLEAR_OAM_DATA
+	ld hl, $c000		; Address of OAM data
+	ld [hl], $80		; Little arrow Y location
 	inc l
-	ld [hl], $10
+	ld [hl], $10		; Little arrow X location
 	inc l
-	ld [hl], $58
+	ld [hl], $58		; Little arrow tile address
 	ld a, $03
 	ld [$dfe8], a
-	ld a, $d3
-	ldh [$ff00 + $40], a
-	ld a, $07
-	ldh [$ff00 + $e1], a
-	ld a, $7d
+	
+	ld a, LCDC_STANDARD
+	ldh [rLCDC], a
+	
+	ld a, MENU_TITLE
+	ldh [rGAME_STATUS], a
+	
+	ld a, $7d		; ~ 2 seconds
 	ldh [rCOUNTDOWN], a
+	
 	ld a, $04
-	ldh [$ff00 + $c6], a
+	ldh [rMUSIC_COUNTDOWN], a
+	
 	ldh a, [rUNKNOWN2]
 	and a
 	ret nz
+	
 	ld a, $13
-	ldh [$ff00 + $c6], a
+	ldh [rMUSIC_COUNTDOWN], a
 	ret
 
-.l_041f:
+.PLAY_DEMO_GAME:
 	ld a, $37
 	ldh [$ff00 + $c0], a
 	ld a, $09
-	ldh [$ff00 + $c2], a
+	ldh [rLEVEL], a
 	xor a
 	ldh [rPLAYERS], a
 	ldh [$ff00 + $b0], a
@@ -686,12 +694,12 @@ MENU_TITLE_INIT::
 .l_045a:
 	ldh [rUNKNOWN2], a
 	ld a, $0a
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	call WAIT_FOR_VBLANK
 	call func_27ad
 	ld de, $4cd7
 	call COPY_TILEMAP
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ret
@@ -706,42 +714,55 @@ func_0474::
 MENU_TITLE::	
 	ldh a, [rCOUNTDOWN]
 	and a
-	jr nz, .l_0488
-	ld hl, $ffc6
+	jr nz, .skip_still_no_demo
+	ld hl, rMUSIC_COUNTDOWN
 	dec [hl]
-	jr z, .l_041f
-	ld a, $7d
+	jr z, .PLAY_DEMO_GAME
+	
+	ld a, $7d		; ~ 2 seconds
 	ldh [rCOUNTDOWN], a
-.l_0488:
-	call func_0a98
-	ld a, $55
-	ldh [$ff00 + $01], a
+	
+.skip_still_no_demo:
+	call WASTE_TIME
+	
+	ld a, $55		; Something Serial Data related
+	ldh [rSB], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 	ldh a, [$ff00 + $cc]
 	and a
-	jr z, .l_04a2
+	jr z, .skip_title_serial_check
+	
 	ldh a, [$ff00 + $cb]
 	and a
 	jr nz, .l_04d7
+	
 	xor a
 	ldh [$ff00 + $cc], a
 	jr .l_0509
-.l_04a2:
+	
+.skip_title_serial_check:
 	ldh a, [rBUTTON_HIT]
 	ld b, a
+	
 	ldh a, [rPLAYERS]
-	bit 2, b
-	jr nz, .l_04f3
-	bit 4, b
-	jr nz, .l_0502
-	bit 5, b
-	jr nz, .l_0507
-	bit 3, b
-	ret z
+	
+	bit BTN_SELECT, b
+	jr nz, .MENU_TITLE_SELECT_BTN
+	
+	bit BTN_RIGHT, b
+	jr nz, .MENU_TITLE_RIGHT_BTN
+	
+	bit BTN_LEFT, b
+	jr nz, .MENU_TITLE_LEFT_BTN
+	
+	bit BTN_START, b
+	ret z			; Return if no relevant button was pressed
+	
 	and a
 	ld a, $08
-	jr z, .l_04e7
+	jr z, .1_player_selected	; jump if 1 player selected
+	
 	ld a, b
 	cp $08
 	ret nz
@@ -749,9 +770,9 @@ MENU_TITLE::
 	cp $29
 	jr z, .l_04d7
 	ld a, $29
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $81
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 .l_04cd:
 	ldh a, [$ff00 + $cc]
 	and a
@@ -762,51 +783,48 @@ MENU_TITLE::
 .l_04d7:
 	ld a, $2a
 .l_04d9:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	xor a
 	ldh [rCOUNTDOWN], a
-	ldh [$ff00 + $c2], a
+	ldh [rLEVEL], a
 	ldh [$ff00 + $c3], a
 	ldh [$ff00 + $c4], a
 	ldh [rUNKNOWN2], a
 	ret
 
 
-.l_04e7:
+.1_player_selected:
 	push af
 	ldh a, [rBUTTON_DOWN]
-	bit 7, a
-	jr z, .l_04f0
-	ldh [$ff00 + $f4], a
-
-.l_04f0:
+	bit BTN_DOWN, a
+	jr z, .skip_hard_mode	; set hard mode only if (Start + Down) are pressed.
+	ldh [rHARD_MODE], a
+.skip_hard_mode:
 	pop af
 	jr .l_04d9
 
-.l_04f3:
-	xor $01
-
+.MENU_TITLE_SELECT_BTN:
+	xor $01		; toggles rPLAYERS value (i.e. 0 -> 1 and 1 -> 0)
 .l_04f5:
 	ldh [rPLAYERS], a
+	
 	and a
 	ld a, $10
-	jr z, .l_04fe
-	ld a, $60
-
-.l_04fe:
-	ld [$c001], a
+	jr z, .move_arrow_left
+	ld a, $60		; move arrow right - left of "2PLAYER" text
+.move_arrow_left:
+	ld [$c001], a		; X location of first OAM data entry (= title menu arrow)
 	ret
 
-.l_0502:
+.MENU_TITLE_RIGHT_BTN:
 	and a
-	ret nz
+	ret nz		; return if rPLAYERS = 1 (i.e. 2 players)
 	xor a
-	jr .l_04f3
+	jr .MENU_TITLE_SELECT_BTN
 
-.l_0507:
+.MENU_TITLE_LEFT_BTN:
 	and a
-	ret z
-
+	ret z		; return if rPLAYERS = 0 (i.e. 1 player)
 .l_0509:
 	xor a
 	jr .l_04f5
@@ -816,20 +834,20 @@ func_050c::
 	ldh a, [rUNKNOWN2]
 	and a
 	ret z
-	call func_0a98
+	call WASTE_TIME
 	xor a
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 	ldh a, [rBUTTON_HIT]
 	bit 3, a
 	jr z, .l_052d
 	ld a, $33
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $81
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 	ld a, $06
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_052d:
@@ -845,7 +863,7 @@ func_050c::
 	cp b
 	ret nz
 	ld a, $06
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
@@ -966,7 +984,7 @@ func_05b3::
 	call func_2671
 	ldh [rREQUEST_SERIAL_TRANSFER], a
 	xor a
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ldh [rSB_DATA], a
 	ldh [$ff00 + $dc], a
 	ldh [$ff00 + $d2], a
@@ -976,7 +994,7 @@ func_05b3::
 	ldh [rROW_UPDATE], a
 	call Sound_Init
 	ld a, $2b
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	
 	
@@ -1050,9 +1068,9 @@ func_05f7::
 	ret
 
 .l_0664:
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld a, $16
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_066c:
@@ -1085,13 +1103,13 @@ func_05f7::
 	call func_27ad
 	ld de, $5214
 	call COPY_TILEMAP
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld a, $2f
 	call func_1fdd
 	ld a, $03
 	ldh [rREQUEST_SERIAL_TRANSFER], a
 	xor a
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ldh [rSB_DATA], a
 	ldh [$ff00 + $dc], a
 	ldh [$ff00 + $d2], a
@@ -1137,7 +1155,7 @@ func_05f7::
 	ldh [$ff00 + $da], a
 	ldh [$ff00 + $db], a
 	ld a, $17
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	ld b, b
 	jr z, .l_06b6
@@ -1206,14 +1224,14 @@ func_05f7::
 	jr nz, .l_07a2
 
 .l_076a:
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 
 .l_076d:
 	ldh a, [$ff00 + $d6]
 	and a
 	jr nz, .l_078a
 	ld a, $18
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ldh a, [$ff00 + $cb]
 	cp $29
 	ret nz
@@ -1346,9 +1364,9 @@ func_080e::
 	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
 	ldh [$ff00 + $fb], a
-	ldh [$ff00 + $9f], a
+	ldh [rLINES_CLEARED2], a
 	ldh [$ff00 + $cc], a
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ldh [rREQUEST_SERIAL_TRANSFER], a
 	ldh [$ff00 + $d0], a
 	ldh [rSB_DATA], a
@@ -1358,7 +1376,7 @@ func_080e::
 	call func_1ff2
 	xor a
 	ldh [rROW_UPDATE], a
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld de, $537c
 	push de
 	ld a, $01
@@ -1382,7 +1400,7 @@ func_080e::
 	call func_26b6
 	ld hl, $9951
 	ld a, $30
-	ldh [$ff00 + $9e], a
+	ldh [rLINES_CLEARED1], a
 	ld [hl], $00
 	dec l
 	ld [hl], $03
@@ -1410,7 +1428,7 @@ func_080e::
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ld a, $19
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $01
 	ldh [$ff00 + $cd], a
 	ret
@@ -1448,22 +1466,22 @@ func_080e::
 	jp nz, .l_09f6
 
 .l_08f2:
-	call func_0a98
-	call func_0a98
+	call WASTE_TIME
+	call WASTE_TIME
 	xor a
 	ldh [$ff00 + $cc], a
 	ld a, $29
 
 .l_08fd:
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $81
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0903:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_0903
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	cp $55
 	jr nz, .l_08f2
 	ld de, $0016
@@ -1476,13 +1494,13 @@ func_080e::
 .l_0918:
 	xor a
 	ldh [$ff00 + $cc], a
-	call func_0a98
+	call WASTE_TIME
 	ldi a, [hl]
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $81
 
 .l_0923:
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0925:
 	ldh a, [$ff00 + $cc]
@@ -1545,20 +1563,20 @@ func_080e::
 	jr .l_0964
 
 .l_0974:
-	call func_0a98
-	call func_0a98
+	call WASTE_TIME
+	call WASTE_TIME
 	xor a
 	ldh [$ff00 + $cc], a
 	ld a, $29
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $81
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0985:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_0985
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	cp $55
 	jr nz, .l_0974
 	ld hl, $c300
@@ -1568,10 +1586,10 @@ func_080e::
 	xor a
 	ldh [$ff00 + $cc], a
 	ldi a, [hl]
-	call func_0a98
-	ldh [$ff00 + $01], a
+	call WASTE_TIME
+	ldh [rSB], a
 	ld a, $81
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_09a2:
 	ldh a, [$ff00 + $cc]
@@ -1581,20 +1599,20 @@ func_080e::
 	jr nz, .l_0995
 
 .l_09aa:
-	call func_0a98
-	call func_0a98
+	call WASTE_TIME
+	call WASTE_TIME
 	xor a
 	ldh [$ff00 + $cc], a
 	ld a, $30
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $81
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_09bb:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_09bb
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	cp $56
 	jr nz, .l_09aa
 
@@ -1603,7 +1621,7 @@ func_080e::
 	ld a, $09
 	ldh [$ff00 + $ff], a
 	ld a, $1c
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $02
 	ldh [rROW_UPDATE], a
 	ld a, $03
@@ -1640,19 +1658,19 @@ func_080e::
 	jr .l_0a00
 
 .l_0a06:
-	call func_0a98
+	call WASTE_TIME
 	xor a
 	ldh [$ff00 + $cc], a
 	ld a, $55
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0a14:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_0a14
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	cp $29
 	jr nz, .l_0a06
 	ld de, $0016
@@ -1664,15 +1682,15 @@ func_080e::
 .l_0a26:
 	xor a
 	ldh [$ff00 + $cc], a
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0a2f:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_0a2f
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	ldi [hl], a
 	dec b
 	jr nz, .l_0a26
@@ -1681,19 +1699,19 @@ func_080e::
 	jr nz, .l_0a24
 
 .l_0a3e:
-	call func_0a98
+	call WASTE_TIME
 	xor a
 	ldh [$ff00 + $cc], a
 	ld a, $55
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0a4c:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_0a4c
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	cp $29
 	jr nz, .l_0a3e
 	ld b, $00
@@ -1702,33 +1720,33 @@ func_080e::
 .l_0a5c:
 	xor a
 	ldh [$ff00 + $cc], a
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0a65:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_0a65
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	ldi [hl], a
 	inc b
 	jr nz, .l_0a5c
 
 .l_0a70:
-	call func_0a98
+	call WASTE_TIME
 	xor a
 	ldh [$ff00 + $cc], a
 	ld a, $56
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld a, $80
-	ldh [$ff00 + $02], a
+	ldh [rSC], a
 
 .l_0a7e:
 	ldh a, [$ff00 + $cc]
 	and a
 	jr z, .l_0a7e
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	cp $30
 	jr nz, .l_0a70
 	jp .l_09c6
@@ -1746,10 +1764,9 @@ func_0a8c::
 	ret
 
 
-func_0a98::
+WASTE_TIME::
 	push bc
 	ld b, $fa
-
 .l_0a9b:
 	ld b, b
 	dec b
@@ -1827,7 +1844,7 @@ func_0aa1::
 	xor a
 	ldh [$ff00 + $d6], a
 	ld a, $1a
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_0b02:
@@ -1893,13 +1910,13 @@ func_0aa1::
 	ld a, $aa
 	ldh [$ff00 + $d1], a
 	ld a, $1b
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $05
 	ldh [rCOUNTDOWN2], a
 	jr .l_0b83
 
 .l_0b73:
-	ldh a, [$ff00 + $e1]
+	ldh a, [rGAME_STATUS]
 	cp $01
 	jr nz, .l_0b94
 	ld a, $aa
@@ -2064,7 +2081,7 @@ func_0bf0::
 	ld a, $77
 	ldh [$ff00 + $d1], a
 	ld a, $01
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	jr .l_0c2e
 
 .l_0c60:
@@ -2078,7 +2095,7 @@ func_0bf0::
 	ld a, $aa
 	ldh [$ff00 + $d1], a
 	ld a, $1b
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $05
 	ldh [rCOUNTDOWN2], a
 	ld c, $01
@@ -2213,7 +2230,7 @@ func_0c8c::
 	ld a, $1d
 
 .l_0d27:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $28
 	ldh [rCOUNTDOWN], a
 	ld a, $1d
@@ -2253,7 +2270,7 @@ func_0c8c::
 	ld a, $03
 	call func_2673
 	ld a, $20
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $09
 	ld [$dfe8], a
 	ldh a, [$ff00 + $d7]
@@ -2301,7 +2318,7 @@ func_0c8c::
 
 .l_0db6:
 	ld a, $1f
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ldh [$ff00 + $cc], a
 	ret
 
@@ -2410,7 +2427,7 @@ func_0dbd::
 	ld a, $02
 	call func_2673
 	ld a, $21
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $09
 	ld [$dfe8], a
 	ldh a, [$ff00 + $d8]
@@ -2458,7 +2475,7 @@ func_0dbd::
 
 .l_0ea7:
 	ld a, $1f
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ldh [$ff00 + $cc], a
 	ret
 
@@ -2750,7 +2767,7 @@ func_0f6f::
 .l_1062:
 	ld a, $d3
 	ldh [$ff00 + $40], a
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ret
 
 
@@ -2905,7 +2922,7 @@ func_10d8::
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	xor a
 	ldh [$ff00 + $ef], a
 	ld b, $27
@@ -2923,7 +2940,7 @@ func_10d8::
 
 .l_113a:
 	ld a, $16
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
@@ -2988,7 +3005,7 @@ func_113f::
 	ld a, $bb
 	ldh [rCOUNTDOWN], a
 	ld a, $27
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $10
 	ld [$dfe8], a
 	ret
@@ -3024,7 +3041,7 @@ func_11b2::
 	ld a, $ff
 	ldh [rCOUNTDOWN], a
 	ld a, $28
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	ldh a, [rCOUNTDOWN]
 	and a
@@ -3034,7 +3051,7 @@ func_11b2::
 
 .l_1205:
 	ld a, $29
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld hl, $c213
 	ld [hl], $35
 	ld l, $23
@@ -3052,7 +3069,7 @@ func_11b2::
 
 .l_1225:
 	ld a, $02
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld hl, $9d08
 	ld b, $2f
 	call func_19ff
@@ -3089,7 +3106,7 @@ MENU_ROCKET_1D::
 	ld a, $03
 	call func_2673
 	ld a, $03
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $04
 	ld [$dff8], a
 	ret
@@ -3117,7 +3134,7 @@ MENU_ROCKET_1E::
 	ld a, $82
 	ldh [$ff00 + $ca], a
 	ld a, $2c
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_129d:
@@ -3172,7 +3189,7 @@ MENU_ROCKET_1E::
 	ld a, $ff
 	ldh [rCOUNTDOWN], a
 	ld a, $2d
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	or e
 	cp h
@@ -3197,13 +3214,13 @@ MENU_ROCKET_1E::
 	ld a, $93
 	ldh [$ff00 + $40], a
 	ld a, $05
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
 	ld a, $2e
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	call func_11b2
 	ld de, $2783
@@ -3221,7 +3238,7 @@ MENU_ROCKET_1E::
 	ld a, $bb
 	ldh [rCOUNTDOWN], a
 	ld a, $2f
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $10
 	ld [$dfe8], a
 	ret
@@ -3235,7 +3252,7 @@ MENU_ROCKET_1E::
 	ld a, $a0
 	ldh [rCOUNTDOWN], a
 	ld a, $30
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	ldh a, [rCOUNTDOWN]
 	and a
@@ -3245,7 +3262,7 @@ MENU_ROCKET_1E::
 
 .l_1370:
 	ld a, $31
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $80
 	ldh [rCOUNTDOWN], a
 	ld a, $2f
@@ -3274,7 +3291,7 @@ MENU_ROCKET_1E::
 	ld a, $03
 	call func_2673
 	ld a, $32
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $04
 	ld [$dff8], a
 	ret
@@ -3295,7 +3312,7 @@ MENU_ROCKET_1E::
 	cp $e0
 	jr nz, .l_13cf
 	ld a, $33
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_13cf:
@@ -3320,7 +3337,7 @@ MENU_ROCKET_1E::
 	ld a, $93
 	ldh [$ff00 + $40], a
 	ld a, $10
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
@@ -3383,8 +3400,8 @@ func_1437::
 	ld a, $01
 	ldh [$ff00 + $ff], a
 	xor a
-	ldh [$ff00 + $01], a
-	ldh [$ff00 + $02], a
+	ldh [rSB], a
+	ldh [rSC], a
 	ldh [$ff00 + $0f], a
 
 
@@ -3393,7 +3410,7 @@ func_144f::
 	call func_27ad
 	ld de, $4cd7
 	call COPY_TILEMAP
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld hl, $c200
 	ld de, $26cf
 	ld c, $02
@@ -3416,7 +3433,7 @@ func_144f::
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ld a, $0e
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
@@ -3587,7 +3604,7 @@ func_1517::
 	ld a, $12
 
 .l_1572:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	xor a
 	jr .l_155e
 
@@ -3598,13 +3615,13 @@ func_1517::
 	ld de, $4e3f
 	call COPY_TILEMAP
 	call func_18fc
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld hl, $c200
 	ld de, $26db
 	ld c, $01
 	call func_1776
 	ld de, $c201
-	ldh a, [$ff00 + $c2]
+	ldh a, [rLEVEL]
 	ld hl, $1615
 	call func_174e
 	call func_2671
@@ -3613,7 +3630,7 @@ func_1517::
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ld a, $11
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ldh a, [$ff00 + $c7]
 	and a
 	jr nz, .l_15ba
@@ -3624,7 +3641,7 @@ func_1517::
 	ld a, $15
 
 .l_15bc:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	ld de, $c200
 	call func_1766
@@ -3699,7 +3716,7 @@ func_1517::
 	call WAIT_FOR_VBLANK
 	ld de, $4fa7
 	call COPY_TILEMAP
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld hl, $c200
 	ld de, $26e1
 	ld c, $02
@@ -3718,7 +3735,7 @@ func_1517::
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	ld a, $13
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ldh a, [$ff00 + $c7]
 	and a
 	jr nz, .l_1670
@@ -3729,11 +3746,11 @@ func_1517::
 	ld a, $15
 
 .l_1672:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_1675:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	xor a
 	ld [de], a
 	ret
@@ -3806,7 +3823,7 @@ func_1517::
 	ld e, b
 
 .l_16e6:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	xor a
 	ld [de], a
 	ret
@@ -3942,7 +3959,7 @@ func_1776::
 	ret
 
 
-CLEAR_RAM_C000_TO_C0A0::
+CLEAR_OAM_DATA::
 	xor a
 	ld hl, $c000
 	ld b, $a0
@@ -3955,7 +3972,7 @@ CLEAR_RAM_C000_TO_C0A0::
 
 func_1795::
 	call func_18fc
-	ldh a, [$ff00 + $c2]
+	ldh a, [rLEVEL]
 	ld hl, $d654
 	ld de, $001b
 
@@ -4348,7 +4365,7 @@ func_18fc::
 	ld a, $13
 
 .l_197c:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_197f:
@@ -4361,7 +4378,7 @@ func_18fc::
 .l_1987:
 	ldh [$ff00 + $aa], a
 	ld b, $26
-	ldh a, [$ff00 + $f4]
+	ldh a, [rHARD_MODE]
 	and a
 	jr z, .l_1992
 	ld b, $27
@@ -4397,7 +4414,7 @@ func_18fc::
 .l_19b0:
 	ldh [$ff00 + $aa], a
 	ld b, $26
-	ldh a, [$ff00 + $f4]
+	ldh a, [rHARD_MODE]
 	and a
 	jr z, .l_19bb
 	ld b, $27
@@ -4472,14 +4489,14 @@ func_19ff::
 	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
 	ldh [$ff00 + $fb], a
-	ldh [$ff00 + $9f], a
+	ldh [rLINES_CLEARED2], a
 	ld a, $2f
 	call func_1fd7
 	call func_1ff2
 	call func_2651
 	xor a
 	ldh [rROW_UPDATE], a
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ldh a, [$ff00 + $c0]
 	ld de, $3ff7
 	ld hl, $ffc3
@@ -4510,7 +4527,7 @@ func_19ff::
 	ld [hl], a
 	ld h, $9c
 	ld [hl], a
-	ldh a, [$ff00 + $f4]
+	ldh a, [rHARD_MODE]
 	and a
 	jr z, .l_1a71
 	inc hl
@@ -4533,7 +4550,7 @@ func_19ff::
 	xor a
 
 .l_1a8f:
-	ldh [$ff00 + $9e], a
+	ldh [rLINES_CLEARED1], a
 	and $0f
 	ldd [hl], a
 	jr z, .l_1a98
@@ -4583,14 +4600,14 @@ func_19ff::
 	ld a, $d3
 	ldh [$ff00 + $40], a
 	xor a
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
 func_1ae8::
 	ldh a, [$ff00 + $a9]
 	ld e, a
-	ldh a, [$ff00 + $f4]
+	ldh a, [rHARD_MODE]
 	and a
 	jr z, .l_1afa
 	ld a, $0a
@@ -4988,7 +5005,7 @@ MENU_GAME_OVER_INIT::
 	ld a, $46
 	ldh [rCOUNTDOWN], a
 	ld a, $0d
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	
 	
@@ -5011,7 +5028,7 @@ MENU_GAME_OVER::
 	jr z, .l_1d23
 	ld a, $12
 .l_1d23:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	
 	
@@ -5056,9 +5073,9 @@ MENU_TYPE_B_WON::
 	call func_2696
 	call Sound_Init
 	ld a, $25
-	ldh [$ff00 + $9e], a
+	ldh [rLINES_CLEARED1], a
 	ld a, $0b
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
@@ -5125,7 +5142,7 @@ func_1d84::
 	ld hl, $c802
 	ld de, $510f
 	call func_2804
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ld hl, $c200
 	ld de, $2735
 	ld c, $0a
@@ -5171,11 +5188,11 @@ func_1d84::
 	add a, $0a
 	ld [$dfe8], a
 	ld a, $25
-	ldh [$ff00 + $9e], a
+	ldh [rLINES_CLEARED1], a
 	ld a, $1b
 	ldh [rCOUNTDOWN], a
 	ld a, $23
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	inc e
 	rrc a
@@ -5230,7 +5247,7 @@ func_1d84::
 	ld a, [$dfe9]
 	and a
 	ret nz
-	call CLEAR_RAM_C000_TO_C0A0
+	call CLEAR_OAM_DATA
 	ldh a, [$ff00 + $c4]
 	cp $05
 	ld a, $26
@@ -5238,7 +5255,7 @@ func_1d84::
 	ld a, $05
 
 .l_1e86:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_1e89:
@@ -5320,7 +5337,7 @@ func_1d84::
 	and a
 	ret z
 	ld a, $02
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 	ldh a, [rCOUNTDOWN]
 	and a
@@ -5366,7 +5383,7 @@ func_1d84::
 	ld a, $04
 
 .l_1f6e:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_1f71:
@@ -5375,7 +5392,7 @@ func_1d84::
 	ld a, $90
 	ldh [rCOUNTDOWN], a
 	ld a, $34
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
@@ -5403,7 +5420,7 @@ func_1f91::
 	ldh a, [$ff00 + $c0]
 	cp $37
 	ret nz
-	ldh a, [$ff00 + $e1]
+	ldh a, [rGAME_STATUS]
 	and a
 	ret nz
 	ldh a, [rROW_UPDATE]
@@ -5687,7 +5704,7 @@ func_209c::
 	jr nz, .l_2124
 	call Sound_Init
 	ld a, $01
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ld a, $02
 	ld [$dff0], a
 	ret
@@ -5827,7 +5844,7 @@ func_213e::
 
 .l_21db:
 	xor a
-	ldh [$ff00 + $9e], a
+	ldh [rLINES_CLEARED1], a
 	jr .l_21aa
 
 
@@ -6058,7 +6075,7 @@ func_2293::
 	call func_24ac
 	ldh a, [rPLAYERS]
 	and a
-	ldh a, [$ff00 + $e1]
+	ldh a, [rGAME_STATUS]
 	jr nz, .l_2315
 	and a
 	ret nz
@@ -6145,10 +6162,12 @@ func_2293::
 	ld a, $01
 	ldh [$ff00 + $e0], a
 	ret
+
+func_23b7::
 	ldh a, [rROW_UPDATE]
-	cp $12
-	ret nz
-	ld hl, $9822
+	cp $12		
+	ret nz			; Return if not row 12 is to be copied
+	ld hl, $9822		
 	ld de, $c822
 	call func_24ac
 	ld hl, $986d
@@ -6168,7 +6187,7 @@ func_23cc::
 	ldh [rROW_UPDATE], a
 	ldh a, [rPLAYERS]
 	and a
-	ldh a, [$ff00 + $e1]
+	ldh a, [rGAME_STATUS]
 	jr nz, .l_242f
 	and a
 	ret nz
@@ -6176,18 +6195,18 @@ func_23cc::
 	ld hl, $994e
 	ld de, $ff9f
 	ld c, $02
-	ldh a, [$ff00 + $c0]
-	cp $37
+	ldh a, [rGAME_TYPE]
+	cp GAME_TYPE_A
 	jr z, .l_23ff
 	ld hl, $9950
 	ld de, $ff9e
 	ld c, $01
 .l_23ff:
 	call func_2a3c
-	ldh a, [$ff00 + $c0]
-	cp $37
+	ldh a, [rGAME_TYPE]
+	cp GAME_TYPE_A
 	jr z, .l_242b
-	ldh a, [$ff00 + $9e]
+	ldh a, [rLINES_CLEARED1]
 	and a
 	jr nz, .l_242b
 	ld a, $64
@@ -6207,7 +6226,7 @@ func_23cc::
 	jr nz, .l_2428
 	ld a, $22
 .l_2428:
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 .l_242b:
@@ -6226,19 +6245,21 @@ func_23cc::
 
 
 func_243b::
-	ldh a, [$ff00 + $e1]
+	ldh a, [rGAME_STATUS]
 	and a
-	ret nz
-	ldh a, [$ff00 + $c0]
-	cp $37
-	ret nz
+	ret nz		; return if not in-game
+	
+	ldh a, [rGAME_TYPE]
+	cp GAME_TYPE_A
+	ret nz		; return if type B game
+	
 	ld de, $c0a2
 	call func_2a36
 	ret
 
 
 func_244b::
-	ldh a, [$ff00 + $e1]
+	ldh a, [rGAME_STATUS]
 	and a
 	ret nz
 	ldh a, [$ff00 + $c0]
@@ -6249,7 +6270,7 @@ func_244b::
 	cp $14
 	ret z
 	call func_249d
-	ldh a, [$ff00 + $9f]
+	ldh a, [rLINES_CLEARED2]
 	ld d, a
 	and $f0
 	ret nz
@@ -6257,7 +6278,7 @@ func_244b::
 	and $0f
 	swap a
 	ld d, a
-	ldh a, [$ff00 + $9e]
+	ldh a, [rLINES_CLEARED1]
 	and $f0
 	swap a
 	or d
@@ -6312,16 +6333,15 @@ func_249d::
 	ret
 
 
-func_24ac::
+COPY_ROW::
 	ld b, $0a
-
-.l_24ae:
+.loop_17:
 	ld a, [de]
 	ld [hl], a
 	inc l
 	inc e
 	dec b
-	jr nz, .l_24ae
+	jr nz, .loop_17
 	ldh a, [rROW_UPDATE]
 	inc a
 	ldh [rROW_UPDATE], a
@@ -6619,7 +6639,7 @@ func_25d9::
 	cp $05
 	ret nz
 	ld a, $04
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	ret
 
 
@@ -7520,19 +7540,14 @@ func_29e3::  ; Shutdown routine?
 
 
 func_2a36::
-	ldh a, [$ff00 + $e0]
+	ldh a, [$ff00 + $e0]		; is $01 before the first block and shortly after a line clear
 	and a
 	ret z
-
-
 func_2a3a::
 	ld c, $03
-
-
 func_2a3c::
 	xor a
 	ldh [$ff00 + $e0], a
-
 .l_2a3f:
 	ld a, [de]
 	ld b, a
@@ -7544,7 +7559,6 @@ func_2a3c::
 	ld a, $00
 	jr nz, .l_2a50
 	ld a, $2f
-
 .l_2a50:
 	ldi [hl], a
 	ld a, b
@@ -7559,7 +7573,6 @@ func_2a3c::
 	ld a, $00
 	jr z, .l_2a66
 	ld a, $2f
-
 .l_2a66:
 	ldi [hl], a
 	dec e
@@ -8704,11 +8717,11 @@ func_2a89::
 	rst 38
 	reti
 	ld sp, $dddc
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	rst 38
 	reti
 	ld sp, $dfde
-	ldh [$ff00 + $e1], a
+	ldh [rGAME_STATUS], a
 	rst 38
 	reti
 	ld sp, $e2de
@@ -11246,7 +11259,7 @@ func_3372::
 	ret nz
 	ret nz
 	nop
-	ldh [$ff00 + $01], a
+	ldh [rSB], a
 	ld [hl], c
 	ldd [hl], a
 	ld b, d
@@ -13550,7 +13563,7 @@ func_3e5c::
 	ld a, a
 	ret nz
 	ccf
-	ldh [$ff00 + $9f], a
+	ldh [rLINES_CLEARED2], a
 	ld [hl], b
 	ld c, a
 	cp b
@@ -19480,7 +19493,7 @@ func_4fc0::
 	sbc a, b
 	sbc a, a
 	ldh [$ff00 + $ff], a
-	ldh a, [$ff00 + $9f]
+	ldh a, [rLINES_CLEARED2]
 	ld a, b
 	ld d, a
 	ld a, a
@@ -21082,7 +21095,7 @@ func_4fc0::
 	ld l, a
 
 
-func_64d2::
+RETURN::
 	ret
 
 .l_64d3:
@@ -21110,14 +21123,13 @@ func_64d2::
 	ld [$dff8], a
 
 .l_64fa:
-	call func_64d2
+	call RETURN
 	call func_69dd
 	call func_69fd
 	call func_683c
 	call func_6a21
 	call func_6c44
 	call func_6a65
-
 .l_650f:
 	xor a
 	ld [$dfe0], a
@@ -21132,7 +21144,7 @@ func_64d2::
 	ret
 
 .pausing:
-	call fSound_Init_B
+	call Sound_Init_B
 	xor a
 	ld [$dfe1], a
 	ld [$dff1], a
@@ -21978,7 +21990,6 @@ func_69dd::
 	ld hl, $6480
 	call func_6978
 	jp [hl]
-
 .l_69f0:
 	inc e
 	ld a, [de]
@@ -21987,7 +21998,6 @@ func_69dd::
 	ld hl, $6490
 	call func_697c
 	jp [hl]
-
 .l_69fc:
 	ret
 
@@ -22726,7 +22736,7 @@ func_6d67::
 	nop
 	nop
 	ld de, $0f00
-	ldh a, [$ff00 + $01]
+	ldh a, [rSB]
 	ld [de], a
 	stop
 	rst 38
