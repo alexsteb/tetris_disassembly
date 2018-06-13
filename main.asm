@@ -598,7 +598,7 @@ MENU_COPYRIGHT_2::
 MENU_TITLE_INIT::
 	call WAIT_FOR_VBLANK
 	xor a
-	ldh [$ff00 + $e9], a
+	ldh [rUNUSED], a
 	ldh [rBLOCK_STATUS], a
 	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
@@ -660,54 +660,68 @@ MENU_TITLE_INIT::
 	ret
 
 .PLAY_DEMO_GAME:
-	ld a, $37
-	ldh [$ff00 + $c0], a
+	ld a, GAME_TYPE_A
+	ldh [rGAME_TYPE], a
+	
 	ld a, $09
-	ldh [rLEVEL], a
+	ldh [rLEVEL_A], a		; set to level 9
+	
 	xor a
-	ldh [rPLAYERS], a
-	ldh [$ff00 + $b0], a
-	ldh [$ff00 + $ed], a
-	ldh [$ff00 + $ea], a
-	ld a, $62
-	ldh [$ff00 + $eb], a
+	ldh [rPLAYERS], a		; 1 player mode
+	ldh [rDEMO_STATUS], a
+	ldh [rDEMO_BUTTON_HIT], a
+	ldh [rDEMO_ACTION_COUNTDOWN], a
+	
+	ld a, $62			; $62b0 = start address of first demo storyboard
+	ldh [rDEMO_STORYBOARD_1], a
 	ld a, $b0
-	ldh [$ff00 + $ec], a
+	ldh [rDEMO_STORYBOARD_2], a
+	
 	ldh a, [rDEMO_GAME]
 	cp $02
 	ld a, $02
-	jr nz, .l_045a
-	ld a, $77
-	ldh [$ff00 + $c0], a
+	jr nz, .set_up_first_demo_game	; jump if NOT first demo game was played just now
+					; (if rDEMO_GAME = 2, then first demo was running. If not, jump.)
+; set up second demo game:
+	ld a, GAME_TYPE_B
+	ldh [rGAME_TYPE], a
+	
 	ld a, $09
-	ldh [$ff00 + $c3], a
+	ldh [rLEVEL_B], a		; set to level 9
+	
 	ld a, $02
-	ldh [$ff00 + $c4], a
-	ld a, $63
-	ldh [$ff00 + $eb], a
+	ldh [rINITIAL_HEIGHT], a
+	
+	ld a, $63			; $63b0 = start address of second demo storyboard
+	ldh [rDEMO_STORYBOARD_1], a
 	ld a, $b0
-	ldh [$ff00 + $ec], a
+	ldh [rDEMO_STORYBOARD_2], a
+	
 	ld a, $11
-	ldh [$ff00 + $b0], a
+	ldh [rDEMO_STATUS], a
 	ld a, $01
 
-.l_045a:
+.set_up_first_demo_game:
 	ldh [rDEMO_GAME], a
-	ld a, $0a
-	ldh [rGAME_STATUS], a
+	
+	ld a, MENU_IN_GAME_INIT
+	ldh [rGAME_STATUS], a		; start a normal in-game (called routines are mostly the same)
+	
 	call WAIT_FOR_VBLANK
-	call func_27ad
-	ld de, $4cd7
-	call COPY_TILEMAP
+	call COPY_IN_GAME_TILES
+	
+	ld de, $4cd7			; start of tile map for game select screen
+	call COPY_TILEMAP		; copy that tile map to VRAM (useless!)
 	call CLEAR_OAM_DATA
-	ld a, $d3
-	ldh [$ff00 + $40], a
+	
+	ld a, LCDC_STANDARD
+	ldh [rLCDC], a
 	ret
 	
 	
-func_0474::
+func_0474:: 	; not used function
 	ld a, $ff
-	ldh [$ff00 + $e9], a
+	ldh [rUNUSED], a
 	ret
 	
 	
@@ -786,9 +800,9 @@ MENU_TITLE::
 	ldh [rGAME_STATUS], a
 	xor a
 	ldh [rCOUNTDOWN], a
-	ldh [rLEVEL], a
-	ldh [$ff00 + $c3], a
-	ldh [$ff00 + $c4], a
+	ldh [rLEVEL_A], a
+	ldh [rLEVEL_B], a
+	ldh [rINITIAL_HEIGHT], a
 	ldh [rDEMO_GAME], a
 	ret
 
@@ -830,140 +844,167 @@ MENU_TITLE::
 	jr .l_04f5
 
 
-func_050c::
+CHECK_DEMO_GAME_FINISHED::
 	ldh a, [rDEMO_GAME]
 	and a
-	ret z
+	ret z			; return if NOT in demo mode
+	
 	call WASTE_TIME
-	xor a
+	
+	xor a				; empty serial connection byte
 	ldh [rSB], a
-	ld a, $80
-	ldh [rSC], a
+	ld a, $80			; turn on serial connection and act as slave (allow receiving)
+	ldh [rSC], a			
+	
 	ldh a, [rBUTTON_HIT]
-	bit 3, a
-	jr z, .l_052d
-	ld a, $33
+	bit BTN_START, a
+	jr z, .dont_cancel_demo_game	; jump if Start button not pressed
+					; Start button pressed:
+	ld a, $33			; load byte $33 for starting a serial connection
 	ldh [rSB], a
-	ld a, $81
-	ldh [rSC], a
-	ld a, $06
+	ld a, $81			; turn on serial connection and act as master (try sending)
+	ldh [rSC], a			 
+	
+	ld a, MENU_TITLE_INIT		; quit demo game and return to main menu
 	ldh [rGAME_STATUS], a
 	ret
 
-.l_052d:
-	ld hl, $ffb0
+.dont_cancel_demo_game:
+	ld hl, rDEMO_STATUS
 	ldh a, [rDEMO_GAME]
-	cp $02
+	cp $02				; if is currently running the first demo game, ...
+	
 	ld b, $10
-	jr z, .l_053a
+	jr z, .skip_3
+	
 	ld b, $1d
-
-.l_053a:
-	ld a, [hl]
-	cp b
-	ret nz
-	ld a, $06
-	ldh [rGAME_STATUS], a
+.skip_3:				; ... then set b to $10, otherwise set b to $1d.
+	ld a, [hl]			
+	cp b				
+	ret nz				; if rDEMO_STATUS not equal b then keep going, ...
+	
+	ld a, MENU_TITLE_INIT		; ... otherwise return to main menu.
+	ldh [rGAME_STATUS], a		; (rDEMO_STATUS increases with each block, game 1 goes from $03 to $09, game 2 from $14 to $1c)
 	ret
 
 
-func_0542::
+; This function reads from the storyboard a button configuration and a frame number, how long to hold the buttons (or none)
+; Actual button pressed are stored and replaced by these simulated presses.
+SIMULATE_BUTTON_PRESSES::
 	ldh a, [rDEMO_GAME]
 	and a
-	ret z
-	ldh a, [$ff00 + $e9]
+	ret z			; return if NOT in demo mode
+	
+	ldh a, [rUNUSED]
 	cp $ff
-	ret z
-	ldh a, [$ff00 + $ea]
+	ret z			; always false
+	
+	ldh a, [rDEMO_ACTION_COUNTDOWN]
 	and a
-	jr z, .l_0555
+	jr z, .retrieve_next_action	; jump if countdown reached zero
+	
 	dec a
-	ldh [$ff00 + $ea], a
-	jr .l_0571
+	ldh [rDEMO_ACTION_COUNTDOWN], a ; countdown by 1
+	jr .clear_real_button_press
 
-.l_0555:
-	ldh a, [$ff00 + $eb]
+.retrieve_next_action:
+	ldh a, [rDEMO_STORYBOARD_1]
 	ld h, a
-	ldh a, [$ff00 + $ec]
-	ld l, a
-	ldi a, [hl]
+	ldh a, [rDEMO_STORYBOARD_2]
+	ld l, a				; load the current storyboard address into hl
+	ldi a, [hl]			; get first value at address -> supposed button press
+	
 	ld b, a
-	ldh a, [$ff00 + $ed]
+	ldh a, [rDEMO_BUTTON_HIT]
 	xor b
 	and b
-	ldh [rBUTTON_HIT], a
+	ldh [rBUTTON_HIT], a		; set (actual) button hit to the new button presses.
+					; if any button is pressed twice in a row, turn it off now.
 	ld a, b
-	ldh [$ff00 + $ed], a
-	ldi a, [hl]
-	ldh [$ff00 + $ea], a
+	ldh [rDEMO_BUTTON_HIT], a	; (also save it at rDEMO_BUTTON_HIT)
+	
+	ldi a, [hl]			; load the button press duration from storyboard
+	ldh [rDEMO_ACTION_COUNTDOWN], a
+	
 	ld a, h
-	ldh [$ff00 + $eb], a
+	ldh [rDEMO_STORYBOARD_1], a
 	ld a, l
-	ldh [$ff00 + $ec], a
-	jr .l_0574
+	ldh [rDEMO_STORYBOARD_2], a	; put the next storyboard address into rDEMO_STORYBOARD_n
+	jr .store_actual_button_press
 
-.l_0571:
+.clear_real_button_press:
 	xor a
 	ldh [rBUTTON_HIT], a
-
-.l_0574:
+	
+.store_actual_button_press:
 	ldh a, [rBUTTON_DOWN]
-	ldh [$ff00 + $ee], a
-	ldh a, [$ff00 + $ed]
-	ldh [rBUTTON_DOWN], a
+	ldh [rDEMO_ACTUAL_BUTTON], a	; store actual button presses into rDEMO_ACTUAL_BUTTON
+	ldh a, [rDEMO_BUTTON_HIT]	
+	ldh [rBUTTON_DOWN], a		; replace them with the simulated buttons from the demo storyboard
 	ret
+
+; 057D - unused code
 	xor a
-	ldh [$ff00 + $ed], a
-	jr .l_0571
+	ldh [rDEMO_BUTTON_HIT], a
+	jr .clear_real_button_press
 	ret
 
 
-func_0583::
+USELESS_FUNCTION::
 	ldh a, [rDEMO_GAME]
 	and a
-	ret z
-	ldh a, [$ff00 + $e9]
+	ret z				; return if NOT demo mode
+	
+	ldh a, [rUNUSED]
 	cp $ff
-	ret nz
+	ret nz				; always true - always return
+
+; function never executed:
 	ldh a, [rBUTTON_DOWN]
 	ld b, a
-	ldh a, [$ff00 + $ed]
+	ldh a, [rDEMO_BUTTON_HIT]
 	cp b
 	jr z, .l_05ad
-	ldh a, [$ff00 + $eb]
+	
+	ldh a, [rDEMO_STORYBOARD_1]
 	ld h, a
-	ldh a, [$ff00 + $ec]
+	ldh a, [rDEMO_STORYBOARD_2]
 	ld l, a
-	ldh a, [$ff00 + $ed]
+	
+	ldh a, [rDEMO_BUTTON_HIT]
 	ldi [hl], a
-	ldh a, [$ff00 + $ea]
+	ldh a, [rDEMO_ACTION_COUNTDOWN]
 	ldi [hl], a
+	
 	ld a, h
-	ldh [$ff00 + $eb], a
+	ldh [rDEMO_STORYBOARD_1], a
 	ld a, l
-	ldh [$ff00 + $ec], a
+	ldh [rDEMO_STORYBOARD_2], a
 	ld a, b
-	ldh [$ff00 + $ed], a
+	ldh [rDEMO_BUTTON_HIT], a
+	
 	xor a
-	ldh [$ff00 + $ea], a
+	ldh [rDEMO_ACTION_COUNTDOWN], a
 	ret
 
 .l_05ad:
-	ldh a, [$ff00 + $ea]
+	ldh a, [rDEMO_ACTION_COUNTDOWN]
 	inc a
-	ldh [$ff00 + $ea], a
+	ldh [rDEMO_ACTION_COUNTDOWN], a
 	ret
 
 
-func_05b3::
+RESTORE_BUTTON_PRESSES::
 	ldh a, [rDEMO_GAME]
 	and a
-	ret z
-	ldh a, [$ff00 + $e9]
+	ret z				; return if NOT in demo game 
+	
+	ldh a, [rUNUSED]
 	and a
 	ret nz
-	ldh a, [$ff00 + $ee]
-	ldh [rBUTTON_DOWN], a
+	
+	ldh a, [rDEMO_ACTUAL_BUTTON]
+	ldh [rBUTTON_DOWN], a		; restore stored real button presses at begin of menu_in_game function
 	ret
 
 .l_05c0:
@@ -980,7 +1021,7 @@ func_05b3::
 .l_05d1:
 	call func_144f
 	ld a, $80
-	ld [$c210], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 	call func_2671
 	ldh [rREQUEST_SERIAL_TRANSFER], a
 	xor a
@@ -1007,7 +1048,7 @@ func_05f7::
 	jr z, .l_0620
 	xor a
 	ldh [$ff00 + $f0], a
-	ld de, $c201
+	ld de, rBLOCK_Y
 	call func_1492
 	call func_1517
 	call func_2671
@@ -1100,7 +1141,7 @@ func_05f7::
 
 .l_0696:
 	call WAIT_FOR_VBLANK
-	call func_27ad
+	call COPY_IN_GAME_TILES
 	ld de, $5214
 	call COPY_TILEMAP
 	call CLEAR_OAM_DATA
@@ -1142,7 +1183,7 @@ func_05f7::
 
 .l_06e1:
 	call func_0725
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $26ed
 	ld c, $02
 	call func_1776
@@ -1203,7 +1244,7 @@ func_05f7::
 	ldh [$ff00 + $cc], a
 
 .l_074a:
-	ld de, $c210
+	ld de, rNEXT_BLOCK_VISIBILITY
 	call func_1766
 	ld hl, $ffad
 	jr .l_07bd
@@ -1274,7 +1315,7 @@ func_05f7::
 	ldh [rREQUEST_SERIAL_TRANSFER], a
 
 .l_07b4:
-	ld de, $c200
+	ld de, rBLOCK_VISIBILITY
 	call func_1766
 	ld hl, $ffac
 
@@ -1347,11 +1388,11 @@ func_05f7::
 
 func_080e::
 	ldh a, [$ff00 + $ac]
-	ld de, $c201
+	ld de, rBLOCK_Y
 	ld hl, $07f6
 	call func_1755
 	ldh a, [$ff00 + $ad]
-	ld de, $c211
+	ld de, rNEXT_BLOCK_Y
 	ld hl, $0802
 	call func_1755
 	ret
@@ -1359,7 +1400,7 @@ func_080e::
 
 .l_0828:
 	xor a
-	ld [$c210], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 	ldh [rBLOCK_STATUS], a
 	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
@@ -1392,10 +1433,10 @@ func_080e::
 	ld hl, $9c63
 	ld c, $0a
 	call func_1f7d
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $26bf
 	call func_26b6
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	ld de, $26c7
 	call func_26b6
 	ld hl, $9951
@@ -1635,13 +1676,13 @@ func_080e::
 .l_09e4:
 	ld hl, $c300
 	ldi a, [hl]
-	ld [$c203], a
+	ld [rBLOCK_TYPE], a
 	ldi a, [hl]
-	ld [$c213], a
+	ld [rNEXT_BLOCK_TYPE], a
 	ld a, h
 	ldh [$ff00 + $af], a
 	ld a, l
-	ldh [$ff00 + $b0], a
+	ldh [rDEMO_STATUS], a
 	ret
 
 .l_09f6:
@@ -1835,7 +1876,7 @@ func_0aa1::
 	and a
 	jr z, .l_0af1
 	ld a, $80
-	ld [$c210], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 
 .l_0af1:
 	call func_2683
@@ -2255,7 +2296,7 @@ func_0c8c::
 	ld de, $270b
 
 .l_0d4f:
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld c, $03
 	call func_1776
 	ld a, $19
@@ -2332,7 +2373,7 @@ func_0dbd::
 	ld a, $19
 	ldh [rCOUNTDOWN], a
 	call func_0f60
-	ld hl, $c201
+	ld hl, rBLOCK_Y
 	ld a, [hl]
 	xor $30
 	ldi [hl], a
@@ -2412,7 +2453,7 @@ func_0dbd::
 	ld de, $2729
 
 .l_0e40:
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld c, $02
 	call func_1776
 	ld a, $19
@@ -2420,7 +2461,7 @@ func_0dbd::
 	ldh a, [$ff00 + $ef]
 	and a
 	jr z, .l_0e56
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	ld [hl], $80
 
 .l_0e56:
@@ -2489,7 +2530,7 @@ func_0eae::
 	ld a, $19
 	ldh [rCOUNTDOWN], a
 	call func_0f60
-	ld hl, $c211
+	ld hl, rNEXT_BLOCK_Y
 	ld a, [hl]
 	xor $08
 	ldi [hl], a
@@ -2505,7 +2546,7 @@ func_0eae::
 	cp $05
 	jr nz, .l_0f07
 	ldh a, [$ff00 + $c6]
-	ld hl, $c201
+	ld hl, rBLOCK_Y
 	cp $05
 	jr z, .l_0f03
 	cp $06
@@ -2546,7 +2587,7 @@ func_0eae::
 	ret nz
 	ld a, $0f
 	ldh [rCOUNTDOWN2], a
-	ld hl, $c203
+	ld hl, rBLOCK_TYPE
 	ld a, [hl]
 	xor $01
 	ld [hl], a
@@ -2995,7 +3036,7 @@ func_113f::
 	inc l
 	ld [hl], $b8
 	ld de, $2771
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld c, $03
 	call func_1776
 	ld a, $03
@@ -3034,7 +3075,7 @@ func_11b2::
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	ld [hl], $00
 	ld l, $20
 	ld [hl], $00
@@ -3052,7 +3093,7 @@ func_11b2::
 .l_1205:
 	ld a, $29
 	ldh [rGAME_STATUS], a
-	ld hl, $c213
+	ld hl, rNEXT_BLOCK_TYPE
 	ld [hl], $35
 	ld l, $23
 	ld [hl], $35
@@ -3088,12 +3129,12 @@ MENU_ROCKET_1D::
 	jr nz, .l_1277
 	ld a, $0a
 	ldh [rCOUNTDOWN], a
-	ld hl, $c201
+	ld hl, rBLOCK_Y
 	dec [hl]
 	ld a, [hl]
 	cp $58
 	jr nz, .l_1277
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	ld [hl], $00
 	inc l
 	add a, $20
@@ -3122,7 +3163,7 @@ MENU_ROCKET_1E::
 	jr nz, .l_129d
 	ld a, $0a
 	ldh [rCOUNTDOWN], a
-	ld hl, $c211
+	ld hl, rNEXT_BLOCK_Y
 	dec [hl]
 	ld l, $01
 	dec [hl]
@@ -3143,7 +3184,7 @@ MENU_ROCKET_1E::
 	jr nz, .l_12ad
 	ld a, $06
 	ldh [rCOUNTDOWN2], a
-	ld hl, $c213
+	ld hl, rNEXT_BLOCK_TYPE
 	ld a, [hl]
 	xor $01
 	ld [hl], a
@@ -3209,7 +3250,7 @@ MENU_ROCKET_1E::
 	and a
 	ret nz
 	call WAIT_FOR_VBLANK
-	call func_27ad
+	call COPY_IN_GAME_TILES
 	call func_2293
 	ld a, $93
 	ldh [$ff00 + $40], a
@@ -3224,11 +3265,11 @@ MENU_ROCKET_1E::
 	ret
 	call func_11b2
 	ld de, $2783
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld c, $03
 	call func_1776
 	ldh a, [$ff00 + $f3]
-	ld [$c203], a
+	ld [rBLOCK_TYPE], a
 	ld a, $03
 	call func_2673
 	xor a
@@ -3245,7 +3286,7 @@ MENU_ROCKET_1E::
 	ldh a, [rCOUNTDOWN]
 	and a
 	ret nz
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	ld [hl], $00
 	ld l, $20
 	ld [hl], $00
@@ -3273,12 +3314,12 @@ MENU_ROCKET_1E::
 	jr nz, .l_13b1
 	ld a, $0a
 	ldh [rCOUNTDOWN], a
-	ld hl, $c201
+	ld hl, rBLOCK_Y
 	dec [hl]
 	ld a, [hl]
 	cp $6a
 	jr nz, .l_13b1
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	ld [hl], $00
 	inc l
 	add a, $10
@@ -3304,7 +3345,7 @@ MENU_ROCKET_1E::
 	jr nz, .l_13cf
 	ld a, $0a
 	ldh [rCOUNTDOWN], a
-	ld hl, $c211
+	ld hl, rNEXT_BLOCK_Y
 	dec [hl]
 	ld l, $01
 	dec [hl]
@@ -3321,7 +3362,7 @@ MENU_ROCKET_1E::
 	jr nz, .l_13df
 	ld a, $06
 	ldh [rCOUNTDOWN2], a
-	ld hl, $c213
+	ld hl, rNEXT_BLOCK_TYPE
 	ld a, [hl]
 	xor $01
 	ld [hl], a
@@ -3331,7 +3372,7 @@ MENU_ROCKET_1E::
 	call func_2673
 	ret
 	call WAIT_FOR_VBLANK
-	call func_27ad
+	call COPY_IN_GAME_TILES
 	call Sound_Init
 	call func_2293
 	ld a, $93
@@ -3350,7 +3391,7 @@ func_13fa::
 	ld a, $03
 	ld [$dff8], a
 	ld b, $02
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 
 .l_140c:
 	ld a, [hl]
@@ -3407,15 +3448,15 @@ func_1437::
 
 func_144f::
 	call WAIT_FOR_VBLANK
-	call func_27ad
+	call COPY_IN_GAME_TILES
 	ld de, $4cd7
 	call COPY_TILEMAP
 	call CLEAR_OAM_DATA
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $26cf
 	ld c, $02
 	call func_1776
-	ld de, $c201
+	ld de, rBLOCK_Y
 	call func_148d
 	ldh a, [$ff00 + $c0]
 	ld e, $12
@@ -3471,7 +3512,7 @@ func_1492::
 
 
 func_14b0::
-	ld de, $c200
+	ld de, rBLOCK_VISIBILITY
 	call func_1766
 	ld hl, $ffc1
 	ld a, [hl]
@@ -3551,7 +3592,7 @@ func_1517::
 .l_1521:
 	ld [$dfe8], a
 	ret
-	ld de, $c210
+	ld de, rNEXT_BLOCK_VISIBILITY
 	call func_1766
 	ld hl, $ffc0
 	ld a, [hl]
@@ -3616,12 +3657,12 @@ func_1517::
 	call COPY_TILEMAP
 	call func_18fc
 	call CLEAR_OAM_DATA
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $26db
 	ld c, $01
 	call func_1776
-	ld de, $c201
-	ldh a, [rLEVEL]
+	ld de, rBLOCK_Y
+	ldh a, [rLEVEL_A]
 	ld hl, $1615
 	call func_174e
 	call func_2671
@@ -3643,7 +3684,7 @@ func_1517::
 .l_15bc:
 	ldh [rGAME_STATUS], a
 	ret
-	ld de, $c200
+	ld de, rBLOCK_VISIBILITY
 	call func_1766
 	ld hl, $ffc2
 	ld a, $0a
@@ -3675,7 +3716,7 @@ func_1517::
 
 .l_15f6:
 	ld [hl], a
-	ld de, $c201
+	ld de, rBLOCK_Y
 	ld hl, $1615
 	call func_174e
 	call func_1795
@@ -3717,16 +3758,16 @@ func_1517::
 	ld de, $4fa7
 	call COPY_TILEMAP
 	call CLEAR_OAM_DATA
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $26e1
 	ld c, $02
 	call func_1776
-	ld de, $c201
+	ld de, rBLOCK_Y
 	ldh a, [$ff00 + $c3]
 	ld hl, $16d2
 	call func_174e
-	ld de, $c211
-	ldh a, [$ff00 + $c4]
+	ld de, rNEXT_BLOCK_Y
+	ldh a, [rINITIAL_HEIGHT]
 	ld hl, $1741
 	call func_174e
 	call func_2671
@@ -3754,7 +3795,7 @@ func_1517::
 	xor a
 	ld [de], a
 	ret
-	ld de, $c200
+	ld de, rBLOCK_VISIBILITY
 	call func_1766
 	ld hl, $ffc3
 	ld a, $0a
@@ -3787,7 +3828,7 @@ func_1517::
 
 .l_16b3:
 	ld [hl], a
-	ld de, $c201
+	ld de, rBLOCK_Y
 	ld hl, $16d2
 	call func_174e
 	call func_17af
@@ -3827,7 +3868,7 @@ func_1517::
 	xor a
 	ld [de], a
 	ret
-	ld de, $c210
+	ld de, rNEXT_BLOCK_VISIBILITY
 	call func_1766
 	ld hl, $ffc4
 	ld a, $0a
@@ -3865,7 +3906,7 @@ func_1517::
 
 .l_1722:
 	ld [hl], a
-	ld de, $c211
+	ld de, rNEXT_BLOCK_Y
 	ld hl, $1741
 	call func_174e
 	call func_17af
@@ -3972,7 +4013,7 @@ CLEAR_OAM_DATA::
 
 func_1795::
 	call func_18fc
-	ldh a, [rLEVEL]
+	ldh a, [rLEVEL_A]
 	ld hl, $d654
 	ld de, $001b
 
@@ -4006,7 +4047,7 @@ func_17af::
 	jr .l_17ba
 
 .l_17c1:
-	ldh a, [$ff00 + $c4]
+	ldh a, [rINITIAL_HEIGHT]
 	ld de, $001b
 
 .l_17c6:
@@ -4484,7 +4525,7 @@ func_19ff::
 	ret
 	call WAIT_FOR_VBLANK
 	xor a
-	ld [$c210], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 	ldh [rBLOCK_STATUS], a
 	ldh [rCLEAR_PROGRESS], a
 	ldh [$ff00 + $9b], a
@@ -4536,10 +4577,10 @@ func_19ff::
 	ld [hl], $27
 
 .l_1a71:
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $26bf
 	call func_26b6
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	ld de, $26c7
 	call func_26b6
 	ld hl, $9951
@@ -4558,11 +4599,11 @@ func_19ff::
 
 .l_1a98:
 	call func_1ae8
-	ld a, [$c0de]
+	ld a, [rHIDE_NEXT_BLOCK]
 	and a
 	jr z, .l_1aa6
 	ld a, $80
-	ld [$c210], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 
 .l_1aa6:
 	call func_2007
@@ -4571,12 +4612,12 @@ func_19ff::
 	call func_2683
 	xor a
 	ldh [$ff00 + $a0], a
-	ldh a, [$ff00 + $c0]
-	cp $77
+	ldh a, [rGAME_TYPE]
+	cp GAME_TYPE_B
 	jr nz, .l_1ae0
 	ld a, $34
-	ldh [$ff00 + $99], a
-	ldh a, [$ff00 + $c4]
+	ldh [rGRAVITY], a
+	ldh a, [rINITIAL_HEIGHT]
 	ld hl, $98b0
 	ld [hl], a
 	ld h, $9c
@@ -4624,7 +4665,7 @@ func_1ae8::
 	ld d, $00
 	add hl, de
 	ld a, [hl]
-	ldh [$ff00 + $99], a
+	ldh [rGRAVITY], a
 	ldh [$ff00 + $9a], a
 	ret
 	inc [hl]
@@ -4820,16 +4861,16 @@ MENU_IN_GAME::
 	and a
 	ret nz				; return if in pause menu
 	
-	call func_050c
-	call func_0542
-	call func_0583
+	call CHECK_DEMO_GAME_FINISHED
+	call SIMULATE_BUTTON_PRESSES
+	call USELESS_FUNCTION		; does nothing b/c depending on unused variable
 	call func_24bb
 	call func_209c
 	call func_213e
 	call func_25a1
 	call func_224d
 	call func_1f91
-	call func_05b3
+	call RESTORE_BUTTON_PRESSES
 	ret
 
 .toggle_next_block_hidden:
@@ -4841,7 +4882,7 @@ MENU_IN_GAME::
 	jr z, .l_1c0a
 	ld a, $80
 .l_1c03:
-	ld [$c210], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 	call func_2696
 	ret
 
@@ -4900,7 +4941,7 @@ START_SELECT_HANDLER::
 .set_next_block_display:
 	ld [rHIDE_NEXT_BLOCK_DISPLAY], a	; set the actual visibility of the next block display
 .l_1c50:
-	ld [$c200], a
+	ld [rBLOCK_VISIBILITY], a
 	
 	call func_2683
 	call func_2696
@@ -5005,8 +5046,8 @@ func_1ccb::
 	
 MENU_GAME_OVER_INIT::
 	ld a, $80
-	ld [$c200], a
-	ld [$c210], a
+	ld [rBLOCK_VISIBILITY], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 	call func_2683
 	call func_2696
 	xor a
@@ -5080,8 +5121,8 @@ MENU_TYPE_B_WON::
 	ld a, $80
 	ldh [rCOUNTDOWN], a
 	ld a, $80
-	ld [$c200], a
-	ld [$c210], a
+	ld [rBLOCK_VISIBILITY], a
+	ld [rNEXT_BLOCK_VISIBILITY], a
 	call func_2683
 	call func_2696
 	call Sound_Init
@@ -5156,7 +5197,7 @@ func_1d84::
 	ld de, $510f
 	call func_2804
 	call CLEAR_OAM_DATA
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $2735
 	ld c, $0a
 	call func_1776
@@ -5180,7 +5221,7 @@ func_1d84::
 	pop de
 	dec b
 	jr nz, .l_1dfa
-	ldh a, [$ff00 + $c4]
+	ldh a, [rINITIAL_HEIGHT]
 	cp $05
 	jr nz, .l_1e0f
 	ld a, $09
@@ -5188,7 +5229,7 @@ func_1d84::
 .l_1e0f:
 	inc a
 	ld b, a
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld de, $0010
 	xor a
 
@@ -5197,7 +5238,7 @@ func_1d84::
 	add hl, de
 	dec b
 	jr nz, .l_1e18
-	ldh a, [$ff00 + $c4]
+	ldh a, [rINITIAL_HEIGHT]
 	add a, $0a
 	ld [$dfe8], a
 	ld a, $25
@@ -5261,7 +5302,7 @@ func_1d84::
 	and a
 	ret nz
 	call CLEAR_OAM_DATA
-	ldh a, [$ff00 + $c4]
+	ldh a, [rINITIAL_HEIGHT]
 	cp $05
 	ld a, $26
 	jr z, .l_1e86
@@ -5526,14 +5567,14 @@ func_1ff2::
 
 
 func_2007::
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld [hl], $00
 	inc l
 	ld [hl], $18
 	inc l
 	ld [hl], $3f
 	inc l
-	ld a, [$c213]
+	ld a, [rNEXT_BLOCK_TYPE]
 	ld [hl], a
 	and $fc
 	ld c, a
@@ -5545,7 +5586,7 @@ func_2007::
 	jr z, .l_2041
 .l_2024:
 	ld h, $c3
-	ldh a, [$ff00 + $b0]
+	ldh a, [rDEMO_STATUS]
 	ld l, a
 	ld e, [hl]
 	inc hl
@@ -5555,7 +5596,7 @@ func_2007::
 	ld hl, $c300
 .l_2033:
 	ld a, l
-	ldh [$ff00 + $b0], a
+	ldh [rDEMO_STATUS], a
 	ldh a, [$ff00 + $d3]
 	and a
 	jr z, .l_2065
@@ -5598,10 +5639,10 @@ func_2007::
 
 .l_2065:
 	ld a, e
-	ld [$c213], a
+	ld [rNEXT_BLOCK_TYPE], a
 	call func_2696
 	ldh a, [$ff00 + $9a]
-	ldh [$ff00 + $99], a
+	ldh [rGRAVITY], a
 	ret
 
 .l_2071:
@@ -5641,11 +5682,11 @@ func_209c::
 .l_20a4:
 	ld hl, $ffe5
 	ld [hl], $00
-	ldh a, [$ff00 + $99]
+	ldh a, [rGRAVITY]
 	and a
 	jr z, .l_20b5
 	dec a
-	ldh [$ff00 + $99], a
+	ldh [rGRAVITY], a
 
 .l_20b1:
 	call func_2683
@@ -5659,10 +5700,10 @@ func_209c::
 	and a
 	ret nz
 	ldh a, [$ff00 + $9a]
-	ldh [$ff00 + $99], a
+	ldh [rGRAVITY], a
 
 .l_20c2:
-	ld hl, $c201
+	ld hl, rBLOCK_Y
 	ld a, [hl]
 	ldh [$ff00 + $a0], a
 	add a, $08
@@ -5672,7 +5713,7 @@ func_209c::
 	and a
 	ret z
 	ldh a, [$ff00 + $a0]
-	ld hl, $c201
+	ld hl, rBLOCK_Y
 	ld [hl], a
 	call func_2683
 	ld a, $01
@@ -5705,10 +5746,10 @@ func_209c::
 	ldh [$ff00 + $e5], a
 
 .l_2103:
-	ld a, [$c201]
+	ld a, [rBLOCK_Y]
 	cp $18
 	ret nz
-	ld a, [$c202]
+	ld a, [rBLOCK_X]
 	cp $3f
 	ret nz
 	ld hl, $fffb
@@ -6362,7 +6403,7 @@ COPY_ROW::
 
 
 func_24bb::
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld a, [hl]
 	cp $80
 	ret z
@@ -6409,13 +6450,13 @@ func_24bb::
 	jr z, .l_2509
 	xor a
 	ld [$dfe0], a
-	ld hl, $c203
+	ld hl, rBLOCK_TYPE
 	ldh a, [$ff00 + $a0]
 	ld [hl], a
 	call func_2683
 
 .l_2509:
-	ld hl, $c202
+	ld hl, rBLOCK_X
 	ldh a, [rBUTTON_HIT]
 	ld b, a
 	ldh a, [rBUTTON_DOWN]
@@ -6446,7 +6487,7 @@ func_24bb::
 	ret z
 
 .l_253a:
-	ld hl, $c202
+	ld hl, rBLOCK_X
 	xor a
 	ld [$dfe0], a
 	ldh a, [$ff00 + $a0]
@@ -6564,7 +6605,7 @@ func_25a1::
 .l_25cf:
 	ld a, $02
 	ldh [rBLOCK_STATUS], a
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	ld [hl], $80
 	ret
 
@@ -6694,7 +6735,7 @@ func_2673::
 	ldh [$ff00 + $8e], a
 	ld a, $c0
 	ldh [$ff00 + $8d], a
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	call func_2a89
 	ret
 
@@ -6706,7 +6747,7 @@ func_2683::
 	ldh [$ff00 + $8e], a
 	ld a, $c0
 	ldh [$ff00 + $8d], a
-	ld hl, $c200
+	ld hl, rBLOCK_VISIBILITY
 	call func_2a89
 	ret
 
@@ -6718,7 +6759,7 @@ func_2696::
 	ldh [$ff00 + $8e], a
 	ld a, $c0
 	ldh [$ff00 + $8d], a
-	ld hl, $c210
+	ld hl, rNEXT_BLOCK_VISIBILITY
 	call func_2a89
 	ret
 
@@ -6994,10 +7035,10 @@ COPY_TILES::
 	ret
 
 
-func_27ad::
+COPY_IN_GAME_TILES::
 	call COPY_CHARACTERS
 	ld bc, $00a0
-	call COPY_TILES
+	call COPY_TILES		; continue copying right after characters
 	ld hl, $323f		; address of in-game tiles in memory
 	ld de, $8300		; not starting at $8000 -> Keeping character tiles
 	ld bc, $0d00
@@ -7619,16 +7660,16 @@ func_2a3c::
 
 
 func_2a89::
-	ld a, h			; h = $c200
+	ld a, h			; h = rBLOCK_VISIBILITY or rNEXT_BLOCK_VISIBILITY
 	ldh [$ff00 + $96], a
 	ld a, l
 	ldh [$ff00 + $97], a
 	ld a, [hl]
 	and a
-	jr z, .l_2ab0		; jmp if $c200 is 0
+	jr z, .l_2ab0		; jmp if falling block is currently visible
 	
 	cp $80
-	jr z, .l_2aae		; jmp if $c200 is $80
+	jr z, .l_2aae		; jmp if falling block is currently invisible
 	
 .l_2a97:
 	ldh a, [$ff00 + $96]
@@ -7650,17 +7691,16 @@ func_2a89::
 
 .l_2aae:
 	ldh [$ff00 + $95], a
-
 .l_2ab0:
 	ld b, $07
 	ld de, $ff86
-
 .l_2ab5:
 	ldi a, [hl]
 	ld [de], a
 	inc de
 	dec b
 	jr nz, .l_2ab5
+	
 	ldh a, [$ff00 + $89]
 	ld hl, $2b64
 	rlc a
@@ -8003,7 +8043,7 @@ func_2a89::
 	ldh a, [$ff00 + $dc]
 	dec l
 	rst 28
-	ldh a, [$ff00 + $eb]
+	ldh a, [rDEMO_STORYBOARD_1]
 	dec l
 	rst 28
 	ldh a, [$ff00 + $fc]
@@ -8041,7 +8081,7 @@ func_2a89::
 	ldh a, [$ff00 + $1c]
 	cpl
 	rst 28
-	ldh a, [$ff00 + $ec]
+	ldh a, [rDEMO_STORYBOARD_2]
 	ld l, $ef
 	ldh a, [$ff00 + $fa]
 	ld l, $ef
@@ -20297,8 +20337,8 @@ func_4fc0::
 	nop
 	nop
 	ldh a, [$ff00 + $f0]
-	ldh a, [$ff00 + $b0]
-	ldh a, [$ff00 + $b0]
+	ldh a, [rDEMO_STATUS]
+	ldh a, [rDEMO_STATUS]
 	ldh a, [$ff00 + $f0]
 	nop
 	nop
