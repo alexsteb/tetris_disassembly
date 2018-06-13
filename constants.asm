@@ -29,12 +29,20 @@ USE_ALL_CHANNELS   EQU $FF ; Set all audio channels to both output terminals (st
 MASTER_VOLUME_MAX  EQU $77 ; Set both output terminals to highest volume
 ENVELOPE_NO_SOUND  EQU $08 ; Sets an envelope to no sound and direction to "increase"
 
+
 ; RAM constants
 ; c000-c09f is the OAM data source
-; c0a3-c0aa contain data about line clearing !
 
+rSCORE1           EQU $c0a0 ; score, smallest digits, highest value = 99
+rSCORE2           EQU $c0a1 ; score, middle digits, highest value = 99 (= 9900)
+rSCORE3           EQU $c0a2 ; score, highest digits, highest value = 99 (= 990000)
 rLINE_CLEAR_START EQU $c0a3 ; $ca after clearing 1-3 line(s), $c9 after clearing 4 lines
-! rUNKNOWN3   EQU $c0a4 ; ..
+
+rUNKNOWN3   EQU $c0a4 ; ..
+
+rHIDE_NEXT_BLOCK            EQU $c0de ; 0 = normal, 1 = next block display hidden - LOGIC (even if $0, still off during pause menu)
+rHIDE_NEXT_BLOCK_DISPLAY    EQU $c210 ; 0 = normal, $80 = next block display hidden - DISPLAY (always $80 in pause menu)
+
 rSOUND1     EQU $dfe1 ; (Set whenever a new sound is about to be played)
 rSOUND2     EQU $dfe9 ; ?
 rSOUND3     EQU $dff1 ; ?
@@ -44,6 +52,9 @@ rSOUND6     EQU $dfaf ; ?
 rSOUND7     EQU $dfbf ; ?
 rSOUND8     EQU $dfcf ; ?
 rSOUND9     EQU $df78 ; ?
+
+rPAUSED          EQU $df7f ; 00 = normal / paused, 01 = pause pressed, 02 = unpause pressed
+rPAUSE_CHIME     EQU $df7e ; 00 = normal, 11 = final value in pause menu after countdown, 30 = initial value when pause pressed 
 
 ; Hardware registers
 rMBC        EQU $2000 ; MBC Controller - Select ROM bank 0 (not needed in Tetris)
@@ -99,13 +110,6 @@ rWY         EQU $ff4a ; Window Y Position (R/W)
 rWX         EQU $ff4b ; Window X Position minus 7 (R/W)
 rIE         EQU $ffff ; Interrupt Enable (R/W)
 
-; RAM variables
-rSCORE1          EQU $c0a0 ; score, smallest digits, highest value = 99
-rSCORE2          EQU $c0a1 ; score, middle digits, highest value = 99 (= 9900)
-rSCORE3          EQU $c0a2 ; score, highest digits, highest value = 99 (= 990000)
-
-rPAUSED          EQU $df7f ; 00 = normal / paused, 01 = pause pressed, 02 = unpause pressed
-rPAUSE_CHIME     EQU $df7e ; 00 = normal, 11 = final value in pause menu after countdown, 30 = initial value when pause pressed 
 
 ; HRAM variables
 rBUTTON_DOWN     EQU $ff80 ; buttons currently pressed (lower nibble = buttons, higher nibble = directional keys)
@@ -123,6 +127,10 @@ rIE_TEMP         EQU $ffa1 ; used for temporary storage of IE ($ffff)
 rUNKNOWN1        EQU $ffa4 ; probably unused
 rCOUNTDOWN       EQU $ffa6 ; various uses - counts down one per VBlank (~59.7 times a second)
 rCOUNTDOWN2      EQU $ffa7 ; various uses - counts down one per VBlank  = 4 seconds per byte (256 values)
+
+rPAUSE_MENU      EQU $ffab ; 0 = normal, 1 = in pause menu
+
+; $ffb6 - $ffb7 = DMA transfer routine
 
 rGAME_TYPE       EQU $ffc0 ; $37 = Type A, $77 = Type B
 rMUSIC_TYPE      EQU $ffc1 ; $1c = Music A, $1d = Music B, $1e = Music C, $1f = Music off
@@ -190,7 +198,7 @@ rGAME_STATUS     EQU $ffe1 ; See table below:
     ; $35 = copyright screen during second countdown
 
 rROW_UPDATE     EQU $ffe3 ; current line to move down (after removing line(s))
-rUNKNOWN2       EQU $ffe4 ; ? is 2 on demo game
+rDEMO_GAME      EQU $ffe4 ; 0 = normal game, 2 = first demo game (type A), 1 = second demo game (type B)
 rHARD_MODE      EQU $fff4 ; 0 = off, 88 = on
 
 ; Variable value constants:
