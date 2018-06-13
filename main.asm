@@ -651,7 +651,7 @@ MENU_TITLE_INIT::
 	ld a, $04
 	ldh [rMUSIC_COUNTDOWN], a
 	
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	ret nz
 	
@@ -673,7 +673,7 @@ MENU_TITLE_INIT::
 	ldh [$ff00 + $eb], a
 	ld a, $b0
 	ldh [$ff00 + $ec], a
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	cp $02
 	ld a, $02
 	jr nz, .l_045a
@@ -692,7 +692,7 @@ MENU_TITLE_INIT::
 	ld a, $01
 
 .l_045a:
-	ldh [rUNKNOWN2], a
+	ldh [rDEMO_GAME], a
 	ld a, $0a
 	ldh [rGAME_STATUS], a
 	call WAIT_FOR_VBLANK
@@ -789,7 +789,7 @@ MENU_TITLE::
 	ldh [rLEVEL], a
 	ldh [$ff00 + $c3], a
 	ldh [$ff00 + $c4], a
-	ldh [rUNKNOWN2], a
+	ldh [rDEMO_GAME], a
 	ret
 
 
@@ -831,7 +831,7 @@ MENU_TITLE::
 
 
 func_050c::
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	ret z
 	call WASTE_TIME
@@ -852,7 +852,7 @@ func_050c::
 
 .l_052d:
 	ld hl, $ffb0
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	cp $02
 	ld b, $10
 	jr z, .l_053a
@@ -868,7 +868,7 @@ func_050c::
 
 
 func_0542::
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	ret z
 	ldh a, [$ff00 + $e9]
@@ -919,7 +919,7 @@ func_0542::
 
 
 func_0583::
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	ret z
 	ldh a, [$ff00 + $e9]
@@ -956,7 +956,7 @@ func_0583::
 
 
 func_05b3::
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	ret z
 	ldh a, [$ff00 + $e9]
@@ -4584,7 +4584,7 @@ func_19ff::
 	and a
 	jr z, .l_1ae0
 	ld b, a
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	jr z, .l_1ad6
 	call func_1b1b
@@ -4814,10 +4814,12 @@ func_1b68::
 	
 	
 MENU_IN_GAME::
-	call func_1c0d
-	ldh a, [$ff00 + $ab]
+	call START_SELECT_HANDLER	; check if start or select was pressed
+	
+	ldh a, [rPAUSE_MENU]
 	and a
-	ret nz
+	ret nz				; return if in pause menu
+	
 	call func_050c
 	call func_0542
 	call func_0583
@@ -4830,15 +4832,14 @@ MENU_IN_GAME::
 	call func_05b3
 	ret
 
-.l_1bf4:
+.toggle_next_block_hidden:
 	bit 2, a
 	ret z
-	ld a, [$c0de]
+	ld a, [$rHIDE_NEXT_BLOCK]
 	xor $01
-	ld [$c0de], a
+	ld [$rHIDE_NEXT_BLOCK], a
 	jr z, .l_1c0a
 	ld a, $80
-
 .l_1c03:
 	ld [$c210], a
 	call func_2696
@@ -4849,61 +4850,73 @@ MENU_IN_GAME::
 	jr .l_1c03
 
 
-func_1c0d::
+START_SELECT_HANDLER::
 	ldh a, [rBUTTON_DOWN]
 	and $0f
 	cp $0f
-	jp z, .Screen_Setup
-	ldh a, [rUNKNOWN2]
+	jp z, .Screen_Setup		; if buttons A, B, Select and Start are all pressed, reset game
+	
+	ldh a, [rDEMO_GAME]
 	and a
-	ret nz
+	ret nz				; return now, if it is only a demo game
+	
 	ldh a, [rBUTTON_HIT]
-	bit 3, a
-	jr z, .l_1bf4
+	bit BTN_START, a
+	jr z, .toggle_next_block_hidden	; if Start is NOT pressed, check if Select is pressed
+					
+					; start button was pressed:
 	ldh a, [rPLAYERS]
 	and a
-	jr nz, .l_1c6a
-	ld hl, $ff40
-	ldh a, [$ff00 + $ab]
-	xor $01
-	ldh [$ff00 + $ab], a
-	jr z, .l_1c5a
-	set 3, [hl]
+	jr nz, .l_1c6a			; jump if 2 player mode
+	
+	ld hl, rLCDC
+	
+	ldh a, [rPAUSE_MENU]
+	xor $01				; toggle start menu flag
+	ldh [rPAUSE_MENU], a
+	jr z, .unpausing			; jump if now unpausing
+					
+					; pausing now:
+	set 3, [hl]			; select second background tile map at $9c00 (already contains the pause menu text)
+	
 	ld a, $01
-	ld [rPAUSED], a
-	ld hl, $994e
-	ld de, $9d4e
-	ld b, $04
-
-.l_1c3f:
-	ldh a, [$ff00 + $41]
+	ld [rPAUSED], a			; set "just paused" flag
+	
+	ld hl, $994e			; start of line tiles on BG tile map 1
+	ld de, $9d4e			; start of line tiles on BG tile map 2
+	ld b, $04			; length of line tiles (4 numbers max, 9999 is highest line number)
+.loop_18:
+	ldh a, [rLCDC_STAT]
 	and $03
-	jr nz, .l_1c3f
+	jr nz, .loop_18			; Loop until H-Blank reached (bits 0 and 1 of rLCDC_STAT not set)
+	
 	ldi a, [hl]
-	ld [de], a
+	ld [de], a			; Copy score tile from BG tile map 1 to BG tile map 2
 	inc de
 	dec b
-	jr nz, .l_1c3f
+	jr nz, .loop_18			; loop while there are still tiles left (and wait for H-Blank again)
+	
 	ld a, $80
-
-.l_1c4d:
-	ld [$c210], a
-
+.set_next_block_display:
+	ld [rHIDE_NEXT_BLOCK_DISPLAY], a	; set the actual visibility of the next block display
 .l_1c50:
 	ld [$c200], a
+	
 	call func_2683
 	call func_2696
 	ret
 
-.l_1c5a:
-	res 3, [hl]
+.unpausing:
+	res 3, [hl]			; select first background tile map at $9800 (still contains the fallen blocks)
 	ld a, $02
-	ld [rPAUSED], a
-	ld a, [$c0de]
+	ld [rPAUSED], a			; set the "just unpaused" flag
+	
+	ld a, [rHIDE_NEXT_BLOCK]
 	and a
-	jr z, .l_1c4d
+	jr z, .set_next_block_display	; jump if next block was not hidden before pausing
+	
 	xor a
-	jr .l_1c50
+	jr .l_1c50			; jump if next block was hidden before pausing
 
 .l_1c6a:
 	ldh a, [$ff00 + $cb]
@@ -5524,7 +5537,7 @@ func_2007::
 	ld [hl], a
 	and $fc
 	ld c, a
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	jr nz, .l_2024
 	ldh a, [rPLAYERS]
@@ -7606,16 +7619,17 @@ func_2a3c::
 
 
 func_2a89::
-	ld a, h
+	ld a, h			; h = $c200
 	ldh [$ff00 + $96], a
 	ld a, l
 	ldh [$ff00 + $97], a
 	ld a, [hl]
 	and a
-	jr z, .l_2ab0
+	jr z, .l_2ab0		; jmp if $c200 is 0
+	
 	cp $80
-	jr z, .l_2aae
-
+	jr z, .l_2aae		; jmp if $c200 is $80
+	
 .l_2a97:
 	ldh a, [$ff00 + $96]
 	ld h, a
@@ -8725,7 +8739,7 @@ func_2a89::
 	rst 38
 	reti
 	ld sp, $e2de
-	ldh [rUNKNOWN2], a
+	ldh [rDEMO_GAME], a
 	rst 38
 	reti
 	ld sp, $eedc
@@ -21112,7 +21126,7 @@ RETURN::
 	and a
 	jr nz, .pause_menu	; jump if in pause menu
 .l_64e8:
-	ldh a, [rUNKNOWN2]
+	ldh a, [rDEMO_GAME]
 	and a
 	jr z, .l_64fa
 	xor a
