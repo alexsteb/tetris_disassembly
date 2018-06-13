@@ -40,7 +40,56 @@ rLINE_CLEAR_START EQU $c0a3 ; $ca after clearing 1-3 line(s), $c9 after clearing
 
 rUNKNOWN3   EQU $c0a4 ; ..
 
-rHIDE_NEXT_BLOCK            EQU $c0de ; 0 = normal, 1 = next block display hidden - LOGIC (even if $0, still off during pause menu)
+rHIDE_NEXT_BLOCK            EQU $c0de ; 0 = normal, 1 = next block display hidden (toggled by select button. Keeps value even if hidden in pause menu.)
+
+rBLOCK_VISIBILITY   EQU $c200 ; 80 = invisible, 0 = visible 
+rBLOCK_Y            EQU $c201 ; Y location of falling block
+rBLOCK_X            EQU $c202 ; X location of falling block
+rBLOCK_TYPE         EQU $c203 ; Block type of falling block (see list below)
+
+rNEXT_BLOCK_VISIBILITY   EQU $c210 ; 80 = invisible, 0 = visible 
+rNEXT_BLOCK_Y            EQU $c211 ; Y location of next block (always $80)
+rNEXT_BLOCK_X            EQU $c212 ; X location of next block (always $8f)
+rNEXT_BLOCK_TYPE         EQU $c213 ; Block type of next block (see list below, always the first unrotated variant)
+
+; Block types: (higher numbers mean counter-clockwise rotation)
+                              ; ###
+rL_SHAPE_0          EQU $00   ; #
+rL_SHAPE_1          EQU $01
+rL_SHAPE_2          EQU $02
+rL_SHAPE_3          EQU $03
+                              ; ###
+rREVERSE_L_SHAPE_0  EQU $04   ;   #
+rREVERSE_L_SHAPE_1  EQU $05
+rREVERSE_L_SHAPE_2  EQU $06
+rREVERSE_L_SHAPE_3  EQU $07
+
+rI_SHAPE_0          EQU $08   ; ####
+rI_SHAPE_1          EQU $09
+rI_SHAPE_2          EQU $0a
+rI_SHAPE_3          EQU $0b
+                              ; ##
+rSQUARE_SHAPE_0     EQU $0c   ; ##
+rSQUARE_SHAPE_1     EQU $0d   ; (Yes the square can be rotated!)
+rSQUARE_SHAPE_2     EQU $0e
+rSQUARE_SHAPE_2     EQU $0f
+                              ; ##
+rZ_SHAPE_0          EQU $10   ;  ##
+rZ_SHAPE_1          EQU $11
+rZ_SHAPE_2          EQU $12
+rZ_SHAPE_3          EQU $13
+                              ;  ##
+rS_SHAPE_0          EQU $14   ; ##
+rS_SHAPE_1          EQU $15
+rS_SHAPE_2          EQU $16
+rS_SHAPE_3          EQU $17
+                              ; ###
+rT_SHAPE_0          EQU $18   ;  #
+rT_SHAPE_1          EQU $19
+rT_SHAPE_2          EQU $1a
+rT_SHAPE_3          EQU $1b
+
+
 rHIDE_NEXT_BLOCK_DISPLAY    EQU $c210 ; 0 = normal, $80 = next block display hidden - DISPLAY (always $80 in pause menu)
 
 rSOUND1     EQU $dfe1 ; (Set whenever a new sound is about to be played)
@@ -117,6 +166,9 @@ rBUTTON_HIT      EQU $ff81 ; buttons pressed for the first time
 rVBLANK_DONE     EQU $ff85 ; 1 = VBlank interrupt executed; 0 = Not executed yet
 
 rBLOCK_STATUS    EQU $ff98 ; runs from 1 to 3 when block hits ground; back to 0 before chime and line clear handling
+
+rGRAVITY         EQU $ff99 ; loops from $0a to $00, block falls down by one when transitioning from $0a to $09
+
 rCLEAR_PROGRESS  EQU $ff9c ; runs from 1 to 7 during line clear animation
 
 rLINES_CLEARED1  EQU $ff9e ; smallest digits of cleared line number in decimal, so highest value = 99 - or lines left in game type B
@@ -130,11 +182,16 @@ rCOUNTDOWN2      EQU $ffa7 ; various uses - counts down one per VBlank  = 4 seco
 
 rPAUSE_MENU      EQU $ffab ; 0 = normal, 1 = in pause menu
 
+rDEMO_STATUS     EQU $ffb0 ; $0 = normal, $03 - $0f = # of block in demo 1, $10 = back in main menu (between games) 
+                           ;              $11 - $1c = # of block in demo 2, $1d = back in main menu (after demo 2, before demo 1 again)
+
 ; $ffb6 - $ffb7 = DMA transfer routine
 
 rGAME_TYPE       EQU $ffc0 ; $37 = Type A, $77 = Type B
 rMUSIC_TYPE      EQU $ffc1 ; $1c = Music A, $1d = Music B, $1e = Music C, $1f = Music off
-rLEVEL           EQU $ffc2 ; current level (already in selection menu)
+rLEVEL_A         EQU $ffc2 ; current level (type A)
+rLEVEL_B         EQU $ffc3 ; current level (type B)
+rINITIAL_HEIGHT  EQU $ffc4 ; height of blocks (Type B)
 rPLAYERS         EQU $ffc5 ; 0 = 1 player, 1 = 2 players 
 rMUSIC_COUNTDOWN EQU $ffc6 ; countdown for title screen music - until demo game starts playing (reduces by one whenever rCOUNTDOWN reaches 0)
 ?                EQU $ffca ; related to hiscore entry
@@ -197,8 +254,18 @@ rGAME_STATUS     EQU $ffe1 ; See table below:
     ; $34 = !shortly before rocket launch b
     ; $35 = copyright screen during second countdown
 
+                             
+rCOUNT_UP       EQU $ffe2 ; Counts from $00 to $FF (once per frame) - various uses 
 rROW_UPDATE     EQU $ffe3 ; current line to move down (after removing line(s))
 rDEMO_GAME      EQU $ffe4 ; 0 = normal game, 2 = first demo game (type A), 1 = second demo game (type B)
+
+rUNUSED             EQU $ffe9 ; set only in unused function. but tested everywhere. What a waste.
+rDEMO_ACTION_COUNTDOWN  EQU $ffea ; counts down the frames a button press (or none) is required acc. to storyboard (gravity works anyway)
+rDEMO_STORYBOARD_1  EQU $ffeb ; upper address of demo storyboard
+rDEMO_STORYBOARD_2  EQU $ffec ; lower address of demo storyboard
+rDEMO_BUTTON_HIT    EQU $ffed ; simulated button presses (see joypad constants above)
+rDEMO_ACTUAL_BUTTON EQU $ffee ; saves the actual button presses (after handling simulated ones), and then handles them (= Start btn to quit demo)
+
 rHARD_MODE      EQU $fff4 ; 0 = off, 88 = on
 
 ; Variable value constants:
@@ -256,9 +323,4 @@ MENU_LUIGI_LOST_INIT  EQU   $1e
 MENU_LUIGI_WON        EQU   $20
 MENU_LUIGI_LOST       EQU   $21
 
-
-
-                             
-rCOUNT_UP        EQU $ffe2 ; Counts from $00 to $FF (once per VBlank?) - various uses 
- 
 
