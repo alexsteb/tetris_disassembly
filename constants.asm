@@ -10,7 +10,7 @@ LCDC_STANDARD EQU $d3  ; LCDC, BG, Sprites on, Window Tile Map starts at $9c00,
                        ; BG Tile Map Display starts at $9800,
                        ; OBJ (Sprite) Size is set to 8x8 pixels
 
-; Joypad constants (internal meaning: directional buttons in the upper nibble=
+; Joypad constants (internal meaning: directional buttons in the upper nibble, numbers equal the bit set)
 BTN_RIGHT  EQU 4  ; Directional Right
 BTN_LEFT   EQU 5  ; Directional Left
 BTN_UP     EQU 6  ; Directional Up
@@ -52,7 +52,7 @@ rNEXT_BLOCK_Y            EQU $c211 ; Y location of next block (always $80)
 rNEXT_BLOCK_X            EQU $c212 ; X location of next block (always $8f)
 rNEXT_BLOCK_TYPE         EQU $c213 ; Block type of next block (see list below, always the first unrotated variant)
 
-; Block types: (higher numbers mean counter-clockwise rotation)
+; Block types: (higher numbers mean counter-clockwise rotation. A-Button decreases number -> clockwise rotation)
                               ; ###
 rL_SHAPE_0          EQU $00   ; #
 rL_SHAPE_1          EQU $01
