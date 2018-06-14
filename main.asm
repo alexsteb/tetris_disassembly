@@ -6406,44 +6406,56 @@ func_24bb::
 	ld hl, rBLOCK_VISIBILITY
 	ld a, [hl]
 	cp $80
-	ret z
+	ret z				; return if there is no falling block (visible)
+	
 	ld l, $03
-	ld a, [hl]
-	ldh [$ff00 + $a0], a
+	ld a, [hl]			; = rBLOCK_TYPE
+	ldh [$ff00 + $a0], a		; store current block type
+	
 	ldh a, [rBUTTON_HIT]
 	ld b, a
-	bit 1, b
-	jr nz, .l_24e0
-	bit 0, b
-	jr z, .l_2509
+	
+	bit BTN_B, b
+	jr nz, .rotate_B_button		; jump if button B was pressed
+	
+	bit BTN_A, b
+	jr z, .l_2509			; jump if anything BUT button A was pressed
+					
+					; Button A pressed:	
 	ld a, [hl]
 	and $03
-	jr z, .l_24da
-	dec [hl]
-	jr .l_24ee
+	jr z, .block_variation_low_end	; jump if block type MOD 4 = 0 (lowest variation of block)
+	
+	dec [hl]			; change to lower variation (rotate clockwise)
+	
+	jr .rotation_finished
 
-.l_24da:
+.block_variation_low_end:
 	ld a, [hl]
 	or $03
-	ld [hl], a
-	jr .l_24ee
+	ld [hl], a			; add 3 to the block variation (starting back at the highest variation)
+	
+	jr .rotation_finished
 
-.l_24e0:
+.rotate_B_button:
 	ld a, [hl]
 	and $03
 	cp $03
-	jr z, .l_24ea
-	inc [hl]
-	jr .l_24ee
+	jr z, .block_variation_high_end	; jump if block type MOD 4 = 3 (highest variation of block)
+	
+	inc [hl]			; change to higher variation (rotate counter-clockwise)
+	
+	jr .rotation_finished
 
-.l_24ea:
+.block_variation_high_end:
 	ld a, [hl]
-	and $fc
+	and $fc				; subtract 3 from block variation (starting back at lowest variation)
 	ld [hl], a
 
-.l_24ee:
+.rotation_finished:
 	ld a, $03
 	ld [$dfe0], a
+	
 	call func_2683
 	call func_2573
 	and a
@@ -6498,6 +6510,7 @@ func_24bb::
 .l_2549:
 	ldh [$ff00 + $aa], a
 	ret
+	
 
 .l_254c:
 	bit 5, b
