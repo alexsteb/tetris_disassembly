@@ -92,6 +92,9 @@ rT_SHAPE_3          EQU $1b
 
 rHIDE_NEXT_BLOCK_DISPLAY    EQU $c210 ; 0 = normal, $80 = next block display hidden - DISPLAY (always $80 in pause menu)
 
+rPAUSED          EQU $df7f ; 00 = normal / paused, 01 = pause pressed, 02 = unpause pressed
+rPAUSE_CHIME     EQU $df7e ; 00 = normal, 11 = final value in pause menu after countdown, 30 = initial value when pause pressed 
+
 rSOUND1     EQU $dfe1 ; (Set whenever a new sound is about to be played)
 rSOUND2     EQU $dfe9 ; ?
 rSOUND3     EQU $dff1 ; ?
@@ -102,8 +105,6 @@ rSOUND7     EQU $dfbf ; ?
 rSOUND8     EQU $dfcf ; ?
 rSOUND9     EQU $df78 ; ?
 
-rPAUSED          EQU $df7f ; 00 = normal / paused, 01 = pause pressed, 02 = unpause pressed
-rPAUSE_CHIME     EQU $df7e ; 00 = normal, 11 = final value in pause menu after countdown, 30 = initial value when pause pressed 
 
 ; Hardware registers
 rMBC        EQU $2000 ; MBC Controller - Select ROM bank 0 (not needed in Tetris)
@@ -164,6 +165,25 @@ rIE         EQU $ffff ; Interrupt Enable (R/W)
 rBUTTON_DOWN     EQU $ff80 ; buttons currently pressed (lower nibble = buttons, higher nibble = directional keys)
 rBUTTON_HIT      EQU $ff81 ; buttons pressed for the first time
 rVBLANK_DONE     EQU $ff85 ; 1 = VBlank interrupt executed; 0 = Not executed yet
+
+rOAM_TILE_NO      EQU $ff89 ; temporary storage for OAM data of next transfer to $c000 - $c09f
+rOAM_ATTRIBUTE_NO EQU $ff8a ; "
+?                 EQU $ff8b ; "
+?                 EQU $ff8c ; 
+
+rOAM_TILE_ADDRESS_1  EQU $ff8d ; higher byte of target OAM storage address (in $c000 - $c09f) for transfer from temporary storage in HRAM
+rOAM_TILE_ADDRESS_2  EQU $ff8e ; lower byte " "
+rAMOUNT_SPRITES_TO_DRAW  EQU $ff8f ; draws X amount of sprites starting at $c200, incrementing by $10
+
+rOAM_X_POS        EQU $ff92 ; temporary storage for OAM data of next transfer to $c000 - $c09f
+rOAM_Y_POS        EQU $ff93 ; "
+?                 EQU $ff94 ; "
+rOAM_VISIBLE      EQU $ff95 ; " - $80 = invisible, $00 = visible
+
+rSPRITE_ORIGINAL_ADDRESS_1  EQU $ff96 ; higher byte of starting address of sprite info in $c200+
+rSPRITE_ORIGINAL_ADDRESS_2  EQU $ff97 ;  lower byte of starting address of sprite info in $c200+
+
+
 
 rBLOCK_STATUS    EQU $ff98 ; runs from 1 to 3 when block hits ground; back to 0 before chime and line clear handling
 
@@ -233,8 +253,8 @@ rGAME_STATUS     EQU $ffe1 ; See table below:
     ; $1F = !before 16
     ; $20 = !Luigi won screen
     ; $21 = !Luigi lost screen
-    ; $22 = !Congratulations animation 1 
-    ; $23 = !leads to 05 (maybe during serial conn)
+    ; $22 = !Shortly before congratulations animation 1 
+    ; $23 = !congratulations animation 1
     ; $24 = initial value copyright screen (very short)
     ; $25 = copyright screen during first countdown
     ; $26 = !rocket launch init
