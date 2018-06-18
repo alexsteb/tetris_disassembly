@@ -6458,13 +6458,17 @@ func_24bb::
 	
 	call func_2683
 	call func_2573
+	
 	and a
 	jr z, .l_2509
+	
 	xor a
 	ld [$dfe0], a
+	
 	ld hl, rBLOCK_TYPE
 	ldh a, [$ff00 + $a0]
 	ld [hl], a
+	
 	call func_2683
 
 .l_2509:
@@ -6743,11 +6747,11 @@ func_2671::
 
 
 func_2673::
-	ldh [$ff00 + $8f], a
+	ldh [rAMOUNT_SPRITES_TO_DRAW], a
 	xor a
-	ldh [$ff00 + $8e], a
+	ldh [rOAM_TILE_ADDRESS_2], a
 	ld a, $c0
-	ldh [$ff00 + $8d], a
+	ldh [rOAM_TILE_ADDRESS_1], a
 	ld hl, rBLOCK_VISIBILITY
 	call func_2a89
 	ret
@@ -6755,11 +6759,12 @@ func_2673::
 
 func_2683::
 	ld a, $01
-	ldh [$ff00 + $8f], a
+	ldh [rAMOUNT_SPRITES_TO_DRAW], a
 	ld a, $10
-	ldh [$ff00 + $8e], a
+	ldh [rOAM_TILE_ADDRESS_2], a
 	ld a, $c0
-	ldh [$ff00 + $8d], a
+	ldh [rOAM_TILE_ADDRESS_1], a
+	
 	ld hl, rBLOCK_VISIBILITY
 	call func_2a89
 	ret
@@ -6767,11 +6772,11 @@ func_2683::
 
 func_2696::
 	ld a, $01
-	ldh [$ff00 + $8f], a
+	ldh [rAMOUNT_SPRITES_TO_DRAW], a
 	ld a, $20
-	ldh [$ff00 + $8e], a
+	ldh [rOAM_TILE_ADDRESS_2], a
 	ld a, $c0
-	ldh [$ff00 + $8d], a
+	ldh [rOAM_TILE_ADDRESS_1], a
 	ld hl, rNEXT_BLOCK_VISIBILITY
 	call func_2a89
 	ret
@@ -6798,6 +6803,7 @@ func_26b6::
 	inc de
 	jr $26b6
 	reti
+	
 	nop
 	jr .l_2701
 	nop
@@ -7673,98 +7679,103 @@ func_2a3c::
 
 
 func_2a89::
-	ld a, h			; h = rBLOCK_VISIBILITY or rNEXT_BLOCK_VISIBILITY
-	ldh [$ff00 + $96], a
+	ld a, h			
+	ldh [rSPRITE_ORIGINAL_ADDRESS_1], a
 	ld a, l
-	ldh [$ff00 + $97], a
+	ldh [rSPRITE_ORIGINAL_ADDRESS_2], a
 	ld a, [hl]
 	and a
-	jr z, .l_2ab0		; jmp if falling block is currently visible
+	jr z, .l_2ab0		; jmp if sprite is (supposed to be) visible
 	
 	cp $80
-	jr z, .l_2aae		; jmp if falling block is currently invisible
+	jr z, .l_2aae		; jmp if sprite is (supposed to be) invisible
 	
 .l_2a97:
-	ldh a, [$ff00 + $96]
+	ldh a, [rSPRITE_ORIGINAL_ADDRESS_1]
 	ld h, a
-	ldh a, [$ff00 + $97]
+	ldh a, [rSPRITE_ORIGINAL_ADDRESS_2]
 	ld l, a
 	ld de, $0010
 	add hl, de
-	ldh a, [$ff00 + $8f]
+	ldh a, [rAMOUNT_SPRITES_TO_DRAW]
 	dec a
-	ldh [$ff00 + $8f], a
+	ldh [rAMOUNT_SPRITES_TO_DRAW], a
 	ret z
 	jr $2a89
 
 .l_2aa9:
 	xor a
-	ldh [$ff00 + $95], a
+	ldh [rOAM_VISIBLE], a
 	jr .l_2a97
 
 .l_2aae:
-	ldh [$ff00 + $95], a
+	ldh [rOAM_VISIBLE], a
 .l_2ab0:
 	ld b, $07
 	ld de, $ff86
 .l_2ab5:
-	ldi a, [hl]
+	ldi a, [hl]		; store current sprite info into $ff86 - $ff8d
 	ld [de], a
 	inc de
 	dec b
 	jr nz, .l_2ab5
 	
-	ldh a, [$ff00 + $89]
-	ld hl, $2b64
-	rlc a
+	ldh a, [rOAM_TILE_NO]	; = sprite index (block type)
+	ld hl, $2b64		; list of addresses
+	rlc a			
 	ld e, a
 	ld d, $00
-	add hl, de
+	add hl, de		; add sprite index * 2 to $2b64
 	ld e, [hl]
 	inc hl
-	ld d, [hl]
-	ld a, [de]
+	ld d, [hl]		; retrieve a memory address dependent on current sprite index (smallest is $2c20)
+	ld a, [de]		
 	ld l, a
 	inc de
 	ld a, [de]
-	ld h, a
+	ld h, a			; retrieve a new memory address at the previously retrieved address (smallest is $2d58)
 	inc de
 	ld a, [de]
-	ldh [$ff00 + $90], a
+	ldh [$ff00 + $90], a	
 	inc de
 	ld a, [de]
-	ldh [$ff00 + $91], a
+	ldh [$ff00 + $91], a	; store also two further values in each $ff00 + $90 and $ff00 + $91
 	ld e, [hl]
 	inc hl
-	ld d, [hl]
+	ld d, [hl]		; retrieve a new memory address at the previously retrieved address (smallest is $31a9)
 
-.l_2ad8:
-	inc hl
-	ldh a, [$ff00 + $8c]
+.read_next_design_element:
+	inc hl			; retrieve the sprite design of the sprite index, using tile numbers, $fe for nothing and $ff for end of block
+	ldh a, [$ff00 + $8c]	; ?
 	ldh [$ff00 + $94], a
+	
 	ld a, [hl]
 	cp $ff
-	jr z, .l_2aa9
-	cp $fd
-	jr nz, .l_2af4
+	jr z, .l_2aa9		; jump if end of this sprite's design found 
+	
+	cp $fd			; (there is $fd during congratulation animation.)
+	jr nz, .l_2af4		; jump if not $fd
+	
 	ldh a, [$ff00 + $8c]
 	xor $20
 	ldh [$ff00 + $94], a
+	
 	inc hl
-	ld a, [hl]
+	ld a, [hl]		; read input byte after the $fd
+	
 	jr .l_2af8
 
-.l_2af0:
+.is_empty_design_element:
 	inc de
-	inc de
-	jr .l_2ad8
+	inc de			; skip two de bytes and read next design element
+	jr .read_next_design_element
 
 .l_2af4:
 	cp $fe
-	jr z, .l_2af0
+	jr z, .is_empty_design_element
 
 .l_2af8:
-	ldh [$ff00 + $89], a
+	ldh [rOAM_TILE_NO], a
 	ldh a, [$ff00 + $87]
 	ld b, a
 	ld a, [de]
@@ -7772,6 +7783,7 @@ func_2a89::
 	ldh a, [$ff00 + $8b]
 	bit 6, a
 	jr nz, .l_2b0b
+	
 	ldh a, [$ff00 + $90]
 	add a, b
 	adc a, c
@@ -7788,7 +7800,7 @@ func_2a89::
 	sbc a, $08
 
 .l_2b15:
-	ldh [$ff00 + $93], a
+	ldh [rOAM_Y_POS], a
 	ldh a, [$ff00 + $88]
 	ld b, a
 	inc de
@@ -7814,41 +7826,44 @@ func_2a89::
 	sbc a, $08
 
 .l_2b34:
-	ldh [$ff00 + $92], a
+	ldh [rOAM_X_POS], a
 	push hl
-	ldh a, [$ff00 + $8d]
+	ldh a, [rOAM_TILE_ADDRESS_1]
 	ld h, a
-	ldh a, [$ff00 + $8e]
+	ldh a, [rOAM_TILE_ADDRESS_2]
 	ld l, a
-	ldh a, [$ff00 + $95]
+	ldh a, [rOAM_VISIBLE]
 	and a
-	jr z, .l_2b46
+	jr z, .l_2b46			; jump if sprite is (supposed to be) visible
+	
 	ld a, $ff
 	jr .l_2b48
 
 .l_2b46:
-	ldh a, [$ff00 + $93]
+	ldh a, [rOAM_Y_POS]
 
 .l_2b48:
+	ldi [hl], a		
+	ldh a, [rOAM_X_POS]		
+	ldi [hl], a			
+	ldh a, [rOAM_TILE_NO]
 	ldi [hl], a
-	ldh a, [$ff00 + $92]
-	ldi [hl], a
-	ldh a, [$ff00 + $89]
-	ldi [hl], a
-	ldh a, [$ff00 + $94]
-	ld b, a
-	ldh a, [$ff00 + $8b]
-	or b
-	ld b, a
-	ldh a, [$ff00 + $8a]
-	or b
+	ldh a, [$ff00 + $94]		; 
+	ld b, a				; 
+	ldh a, [$ff00 + $8b]		; 
+	or b				; 
+	ld b, a				; 
+	ldh a, [rOAM_ATTRIBUTE_NO]		; 
+	or b				; "or" both 8b and 9f into the attribute 
 	ldi [hl], a
 	ld a, h
-	ldh [$ff00 + $8d], a
+	ldh [rOAM_TILE_ADDRESS_1], a
 	ld a, l
-	ldh [$ff00 + $8e], a
+	ldh [rOAM_TILE_ADDRESS_2], a
 	pop hl
-	jp .l_2ad8
+	jp .read_next_design_element
+	
+; start of data section (see above):
 	jr nz, .l_2b92
 	inc h
 	inc l
@@ -8034,7 +8049,7 @@ func_2a89::
 	rst 28
 
 .l_2c2b:
-	ldh a, [$ff00 + $89]
+	ldh a, [rOAM_TILE_NO]
 	dec l
 	rst 28
 
