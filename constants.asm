@@ -72,7 +72,7 @@ rI_SHAPE_3          EQU $0b
 rSQUARE_SHAPE_0     EQU $0c   ; ##
 rSQUARE_SHAPE_1     EQU $0d   ; (Yes the square can be rotated!)
 rSQUARE_SHAPE_2     EQU $0e
-rSQUARE_SHAPE_2     EQU $0f
+rSQUARE_SHAPE_3     EQU $0f
                               ; ##
 rZ_SHAPE_0          EQU $10   ;  ##
 rZ_SHAPE_1          EQU $11
@@ -168,8 +168,8 @@ rVBLANK_DONE     EQU $ff85 ; 1 = VBlank interrupt executed; 0 = Not executed yet
 
 rOAM_TILE_NO      EQU $ff89 ; temporary storage for OAM data of next transfer to $c000 - $c09f
 rOAM_ATTRIBUTE_NO EQU $ff8a ; "
-?                 EQU $ff8b ; "
-?                 EQU $ff8c ; 
+rUNKNOWN4         EQU $ff8b ; "
+rUNKNOWN5         EQU $ff8c ; 
 
 rOAM_TILE_ADDRESS_1  EQU $ff8d ; higher byte of target OAM storage address (in $c000 - $c09f) for transfer from temporary storage in HRAM
 rOAM_TILE_ADDRESS_2  EQU $ff8e ; lower byte " "
@@ -177,7 +177,7 @@ rAMOUNT_SPRITES_TO_DRAW  EQU $ff8f ; draws X amount of sprites starting at $c200
 
 rOAM_X_POS        EQU $ff92 ; temporary storage for OAM data of next transfer to $c000 - $c09f
 rOAM_Y_POS        EQU $ff93 ; "
-?                 EQU $ff94 ; "
+rUNKNOWN6         EQU $ff94 ; "
 rOAM_VISIBLE      EQU $ff95 ; " - $80 = invisible, $00 = visible
 
 rSPRITE_ORIGINAL_ADDRESS_1  EQU $ff96 ; higher byte of starting address of sprite info in $c200+
@@ -214,8 +214,8 @@ rLEVEL_B         EQU $ffc3 ; current level (type B)
 rINITIAL_HEIGHT  EQU $ffc4 ; height of blocks (Type B)
 rPLAYERS         EQU $ffc5 ; 0 = 1 player, 1 = 2 players 
 rMUSIC_COUNTDOWN EQU $ffc6 ; countdown for title screen music - until demo game starts playing (reduces by one whenever rCOUNTDOWN reaches 0)
-?                EQU $ffca ; related to hiscore entry
-?                EQU $ffcb ; ?Must be $29 to consider sending data in VBlank..
+rUNKNOWN7        EQU $ffca ; related to hiscore entry
+rUNKNOWN8        EQU $ffcb ; ?Must be $29 to consider sending data in VBlank..
 rREQUEST_SERIAL_TRANSFER        EQU $ffce ; Request serial connection data transfer
 rSB_DATA         EQU $ffcf ; Holds the data to be sent via link cable
 rGAME_STATUS     EQU $ffe1 ; See table below:
