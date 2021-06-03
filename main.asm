@@ -7,16 +7,20 @@ SECTION "rst 00", ROM0 [$00]
   
 SECTION "rst 08", ROM0 [$08]
 	jp Init
-	db $FF, $FF, $FF, $FF, $FF
+	DS $5
+
 SECTION "rst 10", ROM0 [$10]
 	rst $38
-	db $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	DS $7
+
 SECTION "rst 18", ROM0 [$18]
 	rst $38
-	db $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	DS $7
+
 SECTION "rst 20", ROM0 [$20]
 	rst $38
-	db $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	DS $7
+
 SECTION "rst 28", ROM0 [$28]
 
 ; Helper function:
@@ -35,20 +39,25 @@ SECTION "rst 28", ROM0 [$28]
 	push de
 	pop hl
 	jp hl		; jump to that address
-	db $FF, $FF, $FF, $FF
+	DS $4
+
 SECTION "rst 38", ROM0 [$38]
 	rst $38
-	db $FF, $FF, $FF, $FF, $FF, $FF, $FF
+	DS $7
+
 ; Hardware interrupts
 SECTION "vblank", ROM0 [$40]
 	jp VBlank
-	db $FF, $FF, $FF, $FF, $FF
+	DS $5
+
 SECTION "hblank", ROM0 [$48]
 	jp HBlank_Timer
-	db $FF, $FF, $FF, $FF, $FF
+	DS $5
+
 SECTION "timer",  ROM0 [$50]
 	jp HBlank_Timer
-	db $FF, $FF, $FF, $FF, $FF
+	DS $5
+
 SECTION "serial", ROM0 [$58]
 	jp Serial
 
@@ -150,10 +159,8 @@ func_00d0:
 	ei
 	ret
 
-	db $FF, $FF, $FF, $FF, $FF, $FF
-	db $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
-	db $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
-	
+	DS $26
+
 SECTION "Entry", ROM0 [$100]
   nop
 	jp Start
@@ -9027,4 +9034,5 @@ func_7ff0:
 
 Sound_Init::
 	jp $69a5
+	
 	db $00, $00, $00, $00, $00, $00, $00, $00, $00
